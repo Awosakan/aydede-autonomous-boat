@@ -1,0 +1,394 @@
+Çoklu Duba Körlüğü (Multi-Object Tracking Bug): detector.py içindeki zamansal filtre nesne izleme anahtarını doğrudan sınıf adına göre tuttuğu için aynı anda birden fazla turuncu veya sarı duba algılandığında veriler birbirinin üzerine yazılır ve sistem duba adetlerini karıştırır.
+
+Ekran Kenarı Mesafe Patlaması (Edge Truncation Error): detector.py mesafe hesabını tamamen piksel genişliğine bağladığından, ekran kenarından kısmen çıkan bir dubanın genişliği azaldıkça sistem nesneyi yapay olarak çok uzağa ışınlanmış zanneder.
+
+COLREGs Sağa Kaçış Geometrik Kusuru (Asymmetric Repulsion Issue): costmap.py botun ön yarım küresindeki her sarı engele ayırt etmeksizin sağa kaçış rotasyonu uyguladığı için, zaten sağ ön çaprazında duran güvenli engellerin üzerine doğru botun hamle yapmasına yol açabilir.
+
+Kaçırılan Waypoint Sonsuz Döngüsü (Plane Crossing Logic Trap): planner.py geçiş düzlemi toleransında lateral (yanal) sapmayı hesaba katmadığı için, rüzgar veya engelle savrularak hedef noktayı 3 metreden uzak bir mesafeyle teğet geçen İDA noktaya ulaştığını anlayamaz ve geriye dönmek için sonsuz daireler çizebilir.
+
+Dönüşlerde Sürat Kaybı ve Dümensiz Kalma Riski (Steerage Way Problem): planner.py keskin dönüş açılarında hızı direkt 0.2 m/s taban sınırına sabitlediği için, akıntılı ve rüzgarlı göl testlerinde botun altındaki su akışı kesilerek dümen hakimiyeti tamamen kaybolabilir.
+
+Başlatılmamış Değişken Çökmesi (AttributeError Risk): mission_control.py başlatılırken telemetri değişkenlerini sınıfın __init__ fonksiyonu içinde tanımlamadığından, STM32'den henüz paket gelmeden otonom döngü tetiklenirse tüm yazılım sahada anında çökecektir.
+
+Haberleşme Darboğazı ve Komut Gecikmesi (Telemetry Task Latency): Python üst seviye kararları her 41 ms'de bir gönderirken STM32 telemetri okuma görevinin FreeRTOS üzerinde 100 ms'de bir çalışması seri port kuyruğunda yığılmaya ve hantal tepki sürelerine yol açar.
+
+Unutulan PID Akort Paketi Yönetimi (Feature Mismatch Bug): Hem Python hem C protokollerinde MSG_PID_TUNING paketi tanımlanmış olmasına rağmen, STM32 ana döngüsünde bu paketi yakalayıp alt katman katsayılarını güncelleyecek mantıksal kontrol bloğu yazılmamıştır.
+
+Kilit Mekanizması Olmaması ve Veri Yırtılması (Race Condition Risk): STM32 ve Python tarafındaki çoklu iş parçacıkları (thread/task) paylaşılan navigasyon verilerini hiçbir mutex veya kritik bölge koruması olmadan eşzamanlı güncellediği için anlık veri yırtılmaları ve yön sıçramaları yaşanabilir.
+
+Aşırı Aceleci Yosun/Stall Koruması (False Positive Failsafe): safety.c içindeki yosun koruma algoritması 10 ms gibi çok dar bir zaman diliminde yön değişimi aradığı için, katamaran gövdeli bot eylemsizlik momentiyle normal otonom dönüş yaparken bile kendini kilitleyip motor kapatabilir.
+
+Manuel Modda Tehlikeli Değer Ataması (Semantics Mismatch Bug): main.c manuel modda gelen 0-360 derecelik yön açısı verisini doğrudan sağ motorun PWM kontrol hücresine atadığı için, RC moduna geçildiği an sağ motor kontrolsüz şekilde tam gaz asılarak botu döndürebilir.
+
+Kamikaze Modunda Kör Sürüş Riski (Target Lost Outage): mission_control.py kamikaze görevinde kırmızı duba anlık olarak kaçırıldığında botun yönünü son anlık yaw değerine eşitleyip hızı sabit tuttuğu için, botun dalgayla savrularak hedeften tamamen uzaklaşmasına yol açabilir.
+
+Parkur Zaman Aşımı Eksikliği (Mission Timeout Suggestion): Robotun yerel minimumda kalması veya engeller arasında sıkışması durumuna karşı üst seviye durum makinesinde (FSM) herhangi bir maksimum parkur süresi sınırı bulunmamaktadır.
+
+Motor Komutlarında İvme Sönümleme Eksikliği (Rate Limiter Suggestion): Hesaplanan anlık keskin yön ve hız komutlarının bir ramp veya düşük geçiren filtreden geçirilmeden doğrudan motor sürücülere basılması pervanelerde köpürmeye ve mekanik yıpranmaya neden olur.
+
+Sabit HSV Eşik Değerleri (Static Color Ranges Issue): detector.py içindeki HSV yedek algılama koridorları tamamen statik değerlere bağlı olduğundan, saha testlerindeki anlık bulutlanma veya güneş yansımalarında tamamen körleşecektir.
+
+GPS Sıçrama Filtresinde İlk Fix Tuzağı (GPS Outlier Initialization Bug): sensors.c ilk açılışta uydudan gelen ilk konumu mutlak doğru kabul ettiği için, eğer ilk fix paketi hatalı/sıçramış gelirse sonraki tüm gerçek koordinatları "hatalı sıçrama" diyerek reddeder.
+
+Yan Yan Sürüklenmede Yanıltıcı Pusula Hizalaması (Crab Walk Calibration Error): İDA sert akıntı sebebiyle yan yan sürüklendiğinde GPS COG (rota) açısı ile pruva (yaw) açısı farklı olacağından, sensör füzyonu pusulayı hatalı kalibre ederek rotayı tamamen bozabilir.
+
+Statik Costmap Hücre Yapısı (Rigid Costmap Suggestion): Engel haritasının çözünürlük ve boyut parametrelerinin statik olması, dar koylarda veya çok geniş parkurlarda haritalandırma esnekliğini ve doğruluğunu kısıtlar.
+
+APF Doğal Kilidi (Local Minima Vulnerability): Dubanın bot ile hedef koordinat arasına tam doğrusal hat üzerinde denk gelmesi durumunda, itici ve çekici kuvvetler birbirini sıfırlayarak botun su ortasında donup kalmasına yol açar.
+
+Dinamik Parametre Güncelleme Eksikliği (Live Configuration Tuning): config.json içeriğinin sadece başlatma anında okunması, yarışma esnasında Yer Kontrol İstasyonu'ndan canlı olarak hız veya tampon yarıçapı ayarı yapılmasını engeller.
+
+Kamera Görüntü Titremesi (Bounding Box Jitter): Duba sınır çizgilerinin su dalgalanması nedeniyle her karede birkaç piksel oynaması, mesafe formülünde dalgalanmaya yol açarak costmap'e gürültülü engel yerleşimleri basılmasına sebep olur.
+
+Hatalı Voltaj Düşüşü Koruması (Aggressive Battery Sag Risk): safety.c içindeki batarya gerilim düşüm filtresinin zaman penceresi kısa tutulursa, motorların ani yüklenmelerdeki milisaniyelik voltaj sarkmaları haksız yere failsafe tetikleyebilir.
+
+Çift Motor Miksajında Sınır Aşımı Bozulması (Thrust Saturation Distortion): control.c yön ve hız komutlarının toplamı motor limitlerini aştığında doğrusal kırpma yaptığı için, yüksek süratlerde botun dönüş kabiliyetini ve kararlılığını zayıflatır.
+
+UART Donanımsal Kesme Kilitlenmesi (Overrun Error Vulnerability): STM32 seri port donanımında yoğun veri trafiğinden ötürü ORE (Overrun) hatası oluştuğunda ilgili register temizlenmezse UART kesmesi sonsuza kadar kilitlenir ve haberleşme tamamen kopar.
+
+Watchdog Zamanlayıcısının Eksik Görev Denetimi (IWDG Task Monitor Lacking): Bağımsız Watchdog (IWDG) sistemi sadece ana döngüye bağlı olduğundan, FreeRTOS görevlerinden herhangi biri kendi içinde kilitlendiğinde mikrodenetleyici bunu fark edip sistemi yeniden başlatamaz.
+
+Kalıcı Sensör Kalibrasyon Hafızası Eksikliği (EEPROM/Flash Storage Lacking): IMU sensörünün her açılışta yeniden bias kalibrasyonu alması, botun su üzerinde sallantılı başladığı testlerde sensör sıfır noktalarının kalıcı olarak hatalı üretilmesine yol açar.
+
+Rüzgarlı Havada PID İntegral Doyumu (Yaw PID Windup Risk): Yön kontrolünü sağlayan PID algoritmasının integral teriminde anti-windup sınırı esnek tutulursa, rüzgara karşı direnirken biriken hata dönüş bitişlerinde şiddetli aşım (overshoot) yaptırır.
+
+Agresif Batarya Kapatma Davranışı (Dead-Stick Failsafe Risk): Batarya voltajı kritik seviyeye indiğinde motor gücünün anında sıfırlanması, botun akıntılı ve rüzgarlı açık sularda kontrolsüzce sürüklenerek kaybolma riskini doğurur.
+
+Basit CRC Denetimi ve Elektromanyetik Gürültü (Weak Packet Validation): Protokolde kullanılan basit kontrol kodları, güç kablolarından sızan yoğun motor gürültüsü altında bozuk paketlerin gözden kaçmasına veya aşırı paket kaybına sebep olabilir.
+
+Yedek Kablosuz Kontrol Kanalı Eksikliği (Fallback UDP/TCP Link Lacking): Üst seviye haberleşmenin tamamen tek bir seri hat donanımına bağlı olması, kabloda oluşacak anlık gevşemelerde bota yer kontrol istasyonundan manuel müdahale edilmesini tamamen imkansız kılar.
+
+YOLO Çıkarım Süresi Dalgalanması (Inference Jitter Risk): Kamera döngüsünde YOLO modelinin işlem süresi anlık olarak uzadığında, dinamik döngü zamanlayıcısı stabil 24 FPS'i koruyamayarak zamanlama senkronizasyonunu bozabilir.
+
+Hareketli ve Sabit Engel Karışıklığı (Dynamic Obstacle Smearing): Akıntı veya rüzgar sebebiyle su üstünde sürüklenen bir dubanın costmap sönümlenme payından daha hızlı yer değiştirmesi, haritada yapay bir engel çizgisi (leke) bırakır.
+
+APF İtici Kuvvet Katsayısı Katılığı (Rigid Repulsive Gain): APF algoritmasındaki engel itme katsayısının sabit olması, botun dar kapı aralarından geçerken her iki dubadan da aşırı irkilerek kapı ortasında zig-zag yapmasına yol açar.
+
+Kamera Tam Kopma Senaryosu Eksikliği (Total Video Loss Failsafe Lacking): USB kamera kablosunun yerinden çıkması veya gücünün kesilmesi durumunda durum makinesini doğrudan güvenli failsafe moduna geçirecek harici bir istisna kontrolü döngüde bulunmamaktadır.
+
+Kamikaze Vuruşunda Fiziksel Doğrulama Eksikliği (Mechanical Hit Verification Lacking): Kırmızı duba vuruş algılamasının sadece kamera mesafesine bağlanması, kameranın önünden geçen yabancı bir nesne yüzünden botun hedefe ulaşmadan görevi bitti sayıp eve dönmesine yolabilir.
+
+FreeRTOS Yığın Alanı Sınır Durumu (Stack Size Overflow Risk): Büyük veri struct'larının ve kopyalama işlemlerinin yürütüldüğü görevlerde tanımlanan kısıtlı stack boyutları, yoğun anlık kesmeler altında gizli stack overflow çökmelerine zemin hazırlar.
+
+Acil Stop Butonunun Döngüsel Kontrol Gecikmesi (Polling Kill-Switch Delay): Donanımsal acil durdurma emrinin harici bir kesme (EXTI) yerine yazılımsal emniyet görevi döngüsü içinde periyodik taranması kritik milisaniyelik gecikmelere sebep olur.
+
+Senkron Dosya Loglama Gecikmesi (Disk I/O Bottleneck Risk): telemetry_logger.py sisteminin yoğun otonomi döngüsüyle eş zamanlı olarak diske veri yazmaya zorlanması, işletim sisteminin I/O kuyruğunda takılma yaratarak işlemci çekirdeğini anlık dondurabilir.
+Kamera Bağlantı Kaybında Yapay Çerçeve Tuzağı (Mock Frame Loop Trap): main.py içinde kamera donanımsal olarak koptuğunda sistem durmak yerine sürekli yapay bir test çerçevesi ürettiği için, İDA sahada kör olduğunu anlamayıp eski konumunda sabit duba varmış gibi otonom gitmeye çalışır.
+
+Costmap Sınır Dışı Nesne Körlüğü (Costmap Boundary Blindness): costmap.py grid sınırlarının dışına (20 metreden uzağa) düşen duba tespitlerini doğrudan elediği için, uzak mesafedeki engellere karşı rota planlayıcıya hiçbir erken uyarı veya stratejik kaçış alanı sunamaz.
+
+Geri Vites Desteği Olmaması ve Sıkışma Riski (Lack of Reverse Thrust Support): STM32 motor miksajı ve APF planlayıcı sadece ileri yönlü itki üretecek şekilde tasarlandığından, İDA ucu kapalı bir engel koyuna girdiğinde geri vitese takıp çıkamaz ve orada sıkışır.
+
+I2C/SPI Bus Kilitlenmesinde Sensör Görevi Donması (Bus Lockup Freezing): STM32 tarafında motor gürültüsünden dolayı I2C veya SPI hatlarında oluşabilecek bir donanımsal kilitlenme, yazılımsal bir timeout kontrolü yoksa tüm sensör görevini ve dolayısıyla seyrüsefer döngüsünü kalıcı olarak dondurur.
+
+Sonsuz Log Kuyruğu ve Bellek Tüketimi (Unbounded Logger Queue Risk): AsyncLoggerManager içindeki kuyruk yapısı üst sınır olmadan çalıştığından, diske yazma hızının yavaşladığı anlarda RAM belleği şişirerek Python uygulamasının kilitlenmesine neden olabilir.
+
+YOLO Sınıf İndeks Karışıklığı Riski (Hardcoded Class Index Vulnerability): detector.py içerisinde model çıktılarının sınıf indeksleri json konfigürasyonuna tam olarak bağlanmadığından, yeni eğitilmiş bir ONNX modeli yüklendiğinde turuncu ve sarı dubaların sınıfları birbiriyle karışabilir.
+
+Manyetik Sapma Kalibrasyonu Eksikliği (Compass Magnetometer Cal Lack): STM32 tarafında pusulanın çevredeki metal gövde ve yüksek akım kablolarından etkilenmesini önleyecek dinamik bir manyetik kalibrasyon algoritması bulunmamaktadır.
+
+Failsafe Durumunda Pervane Kavitasyon Riski (Aggressive Braking Cavitation): mission_control.py failsafe durumuna geçtiğinde motor hızını anında sıfıra set ettiği için, yüksek hızda giden botun arkasında devasa bir köpürme oluşur ve yön kararlılığı bir anlık tamamen kaybolur.
+
+GPS Verisi Saniyede Bir Gelirken Sabit Türev Hesabı (GPS Derivative Jitter): GPS yenileme hızı otonomi döngüsünden yavaş olduğu için, her yeni koordinat geldiğinde hız ve yön türev hesaplarında anlık sahte sıçramalar meydana gelir.
+
+Trigonometrik Fonksiyonlarda Sıfıra Bölme Riski (Zero Division Vulnerability): planner.py ve costmap.py içindeki mesafe hesaplamalarında iki koordinat tam olarak üst üste bindiğinde payda sıfır olacağı için kod hata fırlatarak otonomiyi durdurabilir.
+
+Güneş Yansımasında Beyaz Dengesi Körlüğü (Auto Exposure Blindness): Kamera sürücüsünde otomatik pozlama ve beyaz dengesi kilitlenmediği için, bot aniden güneşe doğru döndüğünde duba renkleri patlayacak ve hem YOLO hem HSV sistemi nesneleri kaçıracaktır.
+
+Doğrusal Entegral Windup Tehlikesi (Cross-Track Error Saturation Limit): planner.py içindeki rüzgar sapma integrali doyum sınırı çok büyük veya çok küçük kalırsa, uzun süreli akıntılarda botun rotayı aşırı düzeltmesine veya hiç düzeltememesine yol açar.
+
+STM32 Başlangıç Kesme Zamanlaması Hatası (Early Interrupt Initialization Bug): FreeRTOS scheduler başlatılmadan önce UART kesmesi tetiklenirse, gelen ilk byte işletim sistemi hazır olmadığı için çekirdek kilitlenmesine sebep olabilir.
+
+Homografi Matrisi Eksikliği ve Perspektif Yanılgısı (Perspective Distance Error): detector.py içindeki mesafe hesabı sadece duba piksel genişliğine baktığından, bot dalgalarla öne veya arkaya doğru her yalpaladığında dubaların mesafesi yapay olarak değişecektir.
+
+Zayıf Paket Başlığı Doğrulaması (Weak Protocol Header Validation): Protokol paketlerinin başlangıç senkronizasyon byte'ları kısa veya zayıf tutulursa, seri porttaki rastgele hat gürültüleri gerçek paket zannedilerek parser'ın zaman kaybetmesine yol açar.
+
+Dinamik Engel Yarıçapı Esneksizliği (Static Inflation Radius Issue): costmap.py içindeki şişirme yarıçapı botun anlık hızından bağımsız sabit tutulduğu için, bot yüksek hızla giderken engellere çok yakın geçerek tehlike yaratacaktır.
+
+Pusulada Pitch ve Roll Eğimi Düzeltmesi Eksikliği (Tilt Compensation Lacking): Bot su üstünde sağa/sola veya öne/arkaya sarsıldığında IMU eksenleri eğileceği için hesaplanan yaw açısı gerçek dünya yönüyle uyuşmayıp rotayı saptıracaktır.
+
+Log Dosyası Yazma Hatasında Ana Döngü Çökmesi (Log Write Exception Trap): telemetry_logger.py diskin dolması veya yazma izni hatası gibi durumlarda oluşabilecek I/O istisnalarını sarmalamazsa, bir log hatası yüzünden tüm otonomi çökebilir.
+
+STM32 FPU Yuvarlama Hataları (Floating Point Hardware Drift): Donanımsal FPU kullanan kesme fonksiyonları içindeki yoğun float matematik işlemleri, işlemci register'larında biriken yuvarlama hataları nedeniyle seyrüseferde mikro derecelik sapmalara yolabilir.
+
+Waypoint Listesinin Boş Gelme Durumu (Empty Waypoint List Crash): mission_control.py içerisine yer kontrol istasyonundan yanlışlıkla boş bir rota listesi yüklendiğinde, indeks kontrolleri patlayarak uygulamanın kilitlenmesine neden olur.
+
+Diferansiyel Dümen Kalibrasyon Eksikliği (Motor Thrust Asymmetry): Sol ve sağ motorların fiziksel güç üretimleri veya pervane verimleri birebir aynı olmadığından, kod her iki motora da eşit PWM gönderdiğinde bot düz gitmek yerine hafifçe bir tarafa çekecektir.
+
+Sanal Çit İhlalinde Geri Dönüş Rotalama Eksikliği (Geofence Return Path Lacking): Predictive geofence çiti aştığını anladığında botu direkt durdurduğu için, bot rüzgar ve akıntıyla çit sınırının daha da dışına sürüklenip tamamen gözden kaybolabilir.
+
+Kamera Arayüzünde Donanımsal FPS Kilidi Olmaması (Cap Prop FPS Vulnerability): main.py OpenCV üzerinden CAP_PROP_FPS set etse de birçok USB kamera bu komutu donanımsal düzeyde desteklemez ve işlemciye beklenmedik hızda kare pompalayarak zamanlama dengesini bozar.
+
+FreeRTOS Öncelik Terslemesi Riski (Priority Inversion Threat): Düşük öncelikli sensör görevi ile yüksek öncelikli seyrüsefer görevi paylaşılan bir donanım hattını kilit olmadan kullandığında öncelik terslemesi yaşanıp kritik görevler gecikebilir.
+
+YOLO Model Yükleme Hatasında Döngü Tıkanması (Model Loading Blocking): main.py başlatılırken ONNX model dosyası bozuk veya eksikse, sistemin açılış esnasındaki bloklama süresi çok uzun sürerek emniyet zamanlamalarını kaçırabilir.
+
+APF İtici Kuvvet Sınır Doyumu Eksikliği (Repulsive Force Exploding): Bot bir dubaya aşırı yaklaştığında payda küçüldüğü için itici kuvvet matematiksel olarak sonsuza yaklaşır ve motor kontrolörüne anlamsız, devasa PWM komutları gönderilmesine yol açar.
+
+STM32 Heap Bellek Fragmantasyonu (Dynamic Allocation Fragmentation): FreeRTOS üzerinde eğer görevler veya kuyruklar dinamik hafıza (pvPortMalloc) ile sürekli silinip tekrar açılıyorsa, zamanla heap fragmante olarak mikrodenetleyicinin aniden kilitlenmesine yol açar.
+
+Kuyruk Boşaltma Gecikmesinde Bayat Telemetri Okuma (Stale Telemetry Processing): STM32 seri port tamponunu hızlı boşaltamazsa, Python'a giden veya Python'dan gelen paketler bayatlayarak İDA'nın geçmişteki verilere göre manevra yapmasına sebep olur.
+
+Kamikaze Modunda Dubanın Suya Batıp Çıkması (Object Flicker Jitter): Dalgalar nedeniyle kırmızı duba bir kare suya batıp bir kare çıktığında, zamansal filtre sayacı sürekli sıfırlanacağı için bot kamikaze kilidini bir türlü aktifleştiremez.
+
+Donanımsal Reset Durumunda Güvenli Başlatma Eksikliği (Hot Reboot Thrashing): STM32 anlık gürültüden ötürü reset atarsa, motor PWM çıkışları güvenli sıfır noktasına çekilene kadar geçen milisaniyelik sürede pervaneler kontrolsüzce anlık olarak asılabilir.
+Yedek Algılama Kanalında Gürültü Filtresi Eksikliği (HSV Morphological Operation Lack): detector.py içindeki kontur algılamadan önce aşındırma/yayma (erosion/dilation) işlemleri yapılmadığı için sudaki küçük parlamalar veya yapraklar yapay duba tespiti üreterek costmap'i kirletecektir.
+
+Uzak Waypoint Hedeflerinde Çekici Kuvvet Patlaması (Attractive Force Exploding): planner.py içinde hedef koordinat çok uzakta olduğunda, çekici kuvvet katsayısı (K_attractive) düzgün ölçeklenmezse üretilen yön komutu engellerin itici gücünü tamamen bastırarak botun engellerin üstüne sürmesine yol açabilir.
+
+STM32 Seri Port Kesme Önceliği Çelişkisi (Interrupt Priority Inversion Risk): Eğer UART kesme önceliği FreeRTOS'un izin verdiği sınırın üzerinde ayarlanırsa, kesme içinden RTOS kuyruk fonksiyonları çağrıldığı an mikrodenetleyici donanımsal olarak kilitlenir.
+
+Görev Geçişlerinde Eski Costmap Verisi Kalıntısı (Costmap Clear Delay): Parkurlar arası geçişte costmap.reset() çağrılsa bile, o anki döngüde eski kuyrukta kalan algılamalar haritayı anında tekrar doldurarak yeni parkurun başlangıcında hatalı manevralara sebep olabilir.
+
+Dönüşlerde İç Motorun Ters Dönme Kararsızlığı (Negative Thrust Discontinuity): control.c içindeki motor miksaj formülü keskin dönüşlerde negatif değer ürettiğinde, kullanılan motor sürücüler (ESC) çift yönlü çalışmaya uygun değilse motor anlık kilitlenip korumaya geçebilir.
+
+Asenkron Log Kuyruğunda İstisna Yönetimi Eksikliği (Logger Thread Uncaught Exception): telemetry_logger.py çalışırken USB veya SD kart anlık koptuğunda fırlatılan dosya sistemi istisnaları yakalanmadığı için loglama thread'i kalıcı olarak ölür ve zorunlu log dosyaları üretilemez.
+
+MockSerial Modunda Sonsuz CPU Tüketimi (High CPU Loop in Mock Mode): main.py içinde MockSerial etkinken okuma fonksiyonu sürekli boş byte döndürdüğü için arka plandaki thread işlemci çekirdeğini gereksiz yere yüksek oranda meşgul eder.
+
+Sensör Katmanında Sıcaklık Kayması Telafisi Eksikliği (Gyro Temperature Drift Lacking): Sudaki anlık sıcaklık değişimleri nedeniyle jiroskop bias değerleri zamanla saptığında, bu kaymayı telafi edecek bir sıcaklık kompanzasyon algoritması kodda yer almamaktadır.
+
+Paketlenmiş Verilerde İşaretli/İşaretsiz Tamsayı Uyuşmazlığı (Integer Sign Mismatch): Python struct.pack ile paketlenen telemetri bayrakları ile STM32 tarafındaki işaret tipleri (uint8_t / int8_t) arasında uyuşmazlık çıkarsa mod geçişleri ve sistem durumları hatalı yorumlanabilir.
+
+Sürekli Algılanan Nesnelerde Tavan Maliyet Pasifliği (Hardcoded Decay Ceiling): costmap.py sönümleme yaparken, sürekli aynı noktada sabit duran dubaların maliyeti 100 tavan sınırını aşamadığı için kameranın tek karelik körlüklerinde engel haritadan çok çabuk silinebilir.
+
+Aşırı Yakın Waypoint Konumlarında Yön Kararsızlığı (Collocated Waypoint Jitter): Rota listesinde birbirine 0.5 metreden daha yakın iki ardışık koordinat tanımlandığında, mesafe hesabı paydasındaki küçüklük yüzünden botun hedef açısı anlık olarak 180 derece tersine fırlayabilir.
+
+Kritik Voltaj Altında Donanımsal ESC Koruması Çelişkisi (ESC Low Voltage Cutoff Conflict): Kodda batarya kritik sınırı 10.5V ayarlanmış olsa da, motor sürücülerin (ESC) kendi iç donanımsal düşük voltaj koruması daha yüksekse (örn. 11.1V), STM32 fark etmeden motorlar aniden durabilir.
+
+Görüntü Boyutlandırmada Sabit Çözünürlük Varsayımı (Fixed Frame Size Assumption): detector.py içindeki tüm metrik hesaplamalar 640x480 çözünürlüğe göre yapıldığından, farklı bir USB kamera takılıp donanım varsayılan olarak yüksek çözünürlük başlattığında duba konumları tamamen yanlış hesaplanır.
+
+STM32 Yüksek Frekanslı Görevlerin Diğer Görevleri Boğması (Task Starvation Threat): StartSafetyTask ve StartSensorTask gibi 100Hz çalışan görevlerin yoğun işlem yapması durumunda, FreeRTOS üzerindeki daha düşük öncelikli telemetri veya navigasyon görevlerine işlemci zamanı kalmayabilir.
+
+Kamikaze Darbe Anında IMU Sensörünün Doyuma Ulaşması (Impact Shock IMU Saturation): Bot kırmızı dubaya çarptığı an oluşacak yüksek ivmeli şok, IMU sensörünün ölçüm sınırlarını aşarak entegre yaw açısının tamamen sapmasına ve botun parkurda yönünü kaybetmesine yol açar.
+
+Parçalanmış Seri Paketlerin Zaman Aşımı Eksikliği (Partial Packet Timeout Missing): protocol.py içindeki seri port parser, bir paketin başlığını alıp gövdesi gürültü nedeniyle yarım kaldığında zaman aşımına uğramadığı için yeni gelen paketlerin ayrıştırılmasını kalıcı olarak engelleyebilir.
+
+Motor PWM Çıkışlarında Ölü Bölge İhmali (ESC Deadband Ignored): control.c motorlara gönderilen PWM sinyallerinde 1500us (durma) civarındaki donanımsal ölü bölgeyi hesaba katmadığı için, bot çok düşük hızlardaki mikro yönlendirme komutlarına hiç tepki vermeyerek akıntıda sürüklenecektir.
+
+CPU Çekirdek Kilitlemede Linux İzin Hatası (Affinity Permission Bypass): Android tabanlı mobil sistemlerde root yetkisi tam sağlanmadıysa os.sched_setaffinity işlevi sessizce hata fırlatıp çalışmayacak ve hedeflenen büyük çekirdek optimizasyonu devre dışı kalacaktır.
+
+Sol Ön Çapraz Engellerde COLREGs Kaçış Kusuru (Signed Angle Flipping Error): costmap.py sarı engel botun sol önünde olduğunda da rotasyon matrisini aynı yönde (~22 derece sağa) büktüğü için, bot engelden uzaklaşmak yerine engelin üzerine doğru daha keskin kırabilir.
+
+Geriye Doğru Savrulmalarda Rüzgar İntegralinin Patlaması (Negative Cross-Track Windup): Bot dalgalarla ideal rotanın gerisine doğru sertçe fırlatıldığında, planner.py içindeki CTE integral terimi ters yönde aşırı birikerek bot tekrar ileri gitmeye çalışırken şiddetli yalpalamalara sebep olur.
+
+GPS Fix Kaybında Son Geçerli Verinin Donması (Latching Invalid GPS Fallacy): sensors.c içinde GPS kilidi koptuğunda son geçerli enlem/boylam verisi dondurulup üst seviyeye gönderilmeye devam edilirse, Python zekası botun hala eski konumunda sabit durduğunu zannedecektir.
+
+Watchdog Süresinin Görev Periyotlarından Kısa Olması (Watchdog Premature Reset): STM32 tarafında IWDG sıfırlama periyodu çok kısa ayarlanırsa, telemetri veya navigasyon görevi yoğun trafikte anlık geciktiğinde mikrodenetleyici durduk yere reset atacaktır.
+
+Kamera Log Kaydında Sabit FPS Yanılgısı (Hardcoded Video Writer FPS): VideoWriter başlatılırken FPS değeri konfigürasyondan bağımsız statik olarak 24.0 geçildiğinden, kameranın anlık ışık değişimlerinden dolayı FPS'i düştüğünde kaydedilen MP4 videosu hızlandırılmış çekim gibi oynatılır.
+
+Uzun Süreli Çalışmalarda Motor Isı Diferansiyeli (Differential Thermal Drift): Sol ve sağ motorlardan biri diğerine göre daha fazla ısınarak verim kaybı yaşadığında, seyrüsefer döngüsü düz gitmek için sürekli yön düzeltmesine yüklenmek zorunda kalır ve stabilite azalır.
+
+Yapı Hizalamasında Derleyici Padding Farkı Riski (Compiler Alignment Risk): protocol.h içindeki byte hizalama makroları ile Python tarafındaki struct paketleme formatı mikro derecede uyuşmazsa telemetri verileri tamamen anlamsız sayılara dönüşür.
+
+Failsafe Durumunda Telemetri Loglama Eksikliği (No Logs In Failsafe): mission_control.py failsafe durumuna geçtiğinde otonomi döngüsü kırıldığı için, acil durum esnasında botun nereye sürüklendiğine dair kritik kara kutu logları diske yazılmaz.
+
+Nesne Sınır Çizgilerinde Sıfır Piksel Genişlik Hatası (Zero Width Bounding Box Crash): detector.py mesafe hesaplarken OpenCV veya YOLO anlık hatalı olarak 0 piksel genişliğinde bir box döndürürse, formüldeki sıfıra bölme hatası tüm otonomi thread'ini öldürür.
+
+Hareketsiz Dururken Jiroskop Sapmasında Yalancı Dönüş Algılaması (Gyro Drift Triggering Failsafe): Bot su üstünde tamamen hareketsiz beklerken pusula jiroskop kayması (drift) yaparsa, emniyet görevi bunu gerçek bir dönüş zannederek yosun korumasını hatalı devreye alabilir.
+
+Waypoint Tolerans Yarıçapının Akıntı Hızından Küçük Olması (Radius Smaller Than Drift): planner.py waypoint toleransı 0.6m gibi dar bir mesafeye ayarlandığında, göldeki akıntı hızı botun manevra hızından yüksekse bot noktayı sürekli ıskalayarak etrafında dönecektir.
+
+STM32 Ring Buffer Tampon Taşması (Rx Buffer Overflow Risk): Telefon tarafında anlık bir işletim sistemi takılması olup komut paketleri arka arkaya çok hızlı basıldığında, STM32'nin ring buffer'ı taşarak aradaki kritik paketlerin kaybolmasına yol açar.
+Loglama Zaman Senkronizasyon Sapması (Log Timestamp Desync Issue): Kara kutu kayıtlarının GPS uydu saati yerine telefonun işletim sistemi yerel saatine göre tutulması, STM32 ve harici sistem loglarının milisaniyelik analizlerde birbiriyle tam eşleşmesini zorlaştırır.
+
+Bloklayan UART Gönderim Döngüsü (Blocking USART Transmission Risk): STM32 tarafında telemetri paketleri gönderilirken DMA yerine doğrudan bloklayan döngüsel fonksiyonların kullanılması, seri hatta elektromanyetik bir gürültü oluştuğunda navigasyon görevinin anlık gecikmesine yol açar.
+
+Heartbeat Döngüsünde Yakalanamayan İstisna Hatası (Heartbeat Loop Exception Trap): main.py içindeki kalp atışı thread'i seri porttaki anlık bir temassızlık yüzünden tek bir hata fırlattığında döngü kalıcı olarak sonlanır ve STM32 botu anlamsızca kalıcı failsafe moduna sokar.
+
+Dümen PID Algoritmasında İntegral Doyumu (Yaw PID Steering Windup Risk): control.c içindeki yön kontrol PID mimarisinde integral doyum sınırı (anti-windup) bulunmadığından, bot fiziksel olarak dönemeyeceği bir engele takıldığında integral terimi patlar ve kurtulduğu an çılgınca savrulma yapar.
+
+Kamerada Dinamik Odak Uzaklığı Yanılgısı (Fixed Focal Length Fallacy): detector.py içindeki mesafe formülünün odak uzaklığını sabit piksel değeri kabul etmesi, kameranın otomatik odaklama (autofocus) yaptığı anlarda duba mesafelerinin tamamen hatalı hesaplanmasına yol açar.
+
+Costmap Doğrusal Sönümleme Eksikliği (Linear Costmap Decay Limit): Engel haritasındaki maliyetlerin her adımda sabit bir katsayıyla doğrusal sönümlenmesi, çok yakındaki kritik tehlikeler ile uzaktaki gürültülerin haritadan aynı hızda silinmesine sebep olarak emniyeti riske atar.
+
+Eve Dönüş Modunda Temizlenmeyen Harita Kalıntısı (Return Home Costmap Carryover): Parkur 2 tamamlanıp STATE_RETURN tetiklendiğinde costmap ve integral terimleri tamamen sıfırlanmadığı için, geçmiş engellerin hayalet maliyetleri botun başlangıç noktasına giden en kısa rotasını gereksiz yere saptırır.
+
+FreeRTOS Görevlerinde Busy-Wait (Boşta Bekleme) Tuzağı: STM32 görevleri içinde FreeRTOS'un vTaskDelay fonksiyonu yerine işlemciyi kilitleyen donanımsal gecikmeler veya boş while döngüleri kullanılması, alt öncelikli kritik görevlerin tamamen aç kalmasına (starvation) yol açar.
+
+Paket Sıra Numarası Eksikliği (Missing Packet Sequence Number): Protokol mimarisinde paketlerine sıra numarası (sequence ID) eklenmediği için, seri port tamponunda geciken eski bir komut paketi yeni gelen güncel bir kararın üzerine yazılarak bota geçmişteki manevrayı yaptırabilir.
+
+Motor Çıkışlarında Ani Güç Değişimi Gerilimi (Propulsion Slew Rate Lack): STM32 tarafında motor PWM sinyallerinin aniden 1500us'den 2000us'ye fırlamasını engelleyen bir akım/hız rampası olmadığından, ani gaz yüklemeleri ESC sürücü transistörlerini aşırı zorlayıp yakabilir.
+
+Ekran Rendering İşleminin Ana Döngüyü Yavaşlatması (GUI Rendering Bottleneck): Linux ortamında DISPLAY aktifken çalışan cv2.imshow fonksiyonunun ana otonomi iş parçacığı üzerinde koşturulması, grafik arayüz çizim hızına bağlı olarak otonomi frekansının 24 FPS altına düşmesine sebep olur.
+
+Yüksek İvmelenmede Pusula Eğim Yanılgısı (Acceleration Tilt Compass Distortion): Bot motorların ani asılmasıyla öne doğru şahlandığında veya durduğunda, IMU üzerindeki pitch/roll eksen kaymaları telafi edilmezse pusulanın hesapladığı yaw açısında anlık 10-15 derecelik devasa sapmalar oluşur.
+
+Waypoint Konumunun Engel İçine Denk Gelmesi Kilidi (Goal-In-Obstacle APF Deadlock): Hakemlerin tanımladığı veya rüzgarla sürüklenen bir dubanın tam olarak gitmek istediğin koordinatın üstüne gelmesi durumunda, APF çekici gücü ile itici gücü birbirini kilitler ve bot hedefe asla ulaşamaz.
+
+STM32 Başlangıç Hafızasında Çöp Değer Riski (Uninitialized Stack Variable Vulnerability): control.c veya sensors.c içindeki bazı matematiksel değişkenlerin ilk değer ataması (initialization) yapılmadan doğrudan formüllere sokulması, ilk telemetri gelene kadar motorlara rastgele tehlikeli komutlar gitmesine yol açabilir.
+
+Konfigürasyon Dosyası Hata Toleransı Eksikliği (JSON Parsing Crash Vulnerability): config.json dosyası okunurken içeride yapılacak tek bir parantez veya virgül hatası durumunda, sistemin hardcoded bir acil durum yedeği (fallback) olmadığı için tüm Python programı daha başlamadan çökecektir.
+
+Düşük Voltajda İşlemci Kilitlenme Riski (Lack of Brownout Reset Configuration): Motorların ilk kalkış anında aküden çektiği devasa akım STM32 besleme voltajını anlık düşürürse, Brownout Reset donanımsal olarak doğru yapılandırılmadığı için işlemci çöküp tanımsız bir kilitlenme modunda kalabilir.
+
+Hafif Hatalarda İstasyon Tutma Modu Eksikliği (Lack of Loiter Mode Failsafe): Kritik olmayan sensör veya telemetri kayıplarında botun motorları direkt kapatıp akıntıya teslim etmek yerine, olduğu yerde pervanelerle sabit kalmasını (station-keeping) sağlayacak akıllı bir loiter emniyet modu yoktur.
+
+Aynı Doğrultudaki Dubaların Bounding Box Çakışması (Collinear Obstacle Occlusion): Kamera açısına göre tam arka arkaya dizilmiş iki turuncu dubadan öndeki nesne arkadakini kapattığında, YOLO veya HSV sistemi iki dubayı tek bir devasa kutu zannederek mesafe hesabını tamamen karıştırır.
+
+Bot Dönüşlerinde Yerel Costmap Rotasyon Eksikliği (Missing Costmap Ego-Motion Compensation): Bot kendi ekseni etrafında hızla dönerken costmap ızgara hücreleri botun yeni yaw açısına göre ters yönde döndürülmediği için, haritadaki eski engeller su üstünde savrulmuş gibi iz bırakarak gerçek yerlerini kaybeder.
+
+Protokol Parser Sabit Payload Boyutu Varsayımı (Fixed Payload Size Constraint): IDAParser sınıfının mesaj tiplerini çözerken tamamen sabit byte uzunluklarına güvenmesi, gelecekte protokole eklenebilecek esnek uzunluktaki dinamik veri paketlerinin sistemi kilitlemesine yol açar.
+
+Prodüksiyon Kodunda RTOS Assertion Güvencesi Eksikliği (Disabled configASSERT in Production): FreeRTOSConfig.h içinde hata ayıklama makroları (configASSERT) kapatılarak derleme yapıldıysa, saha testinde oluşabilecek gizli bir kernel hatasında işlemci güvenli durmak yerine tanımsız kararsız davranışlar sergiler.
+
+Hedef Değişimlerinde Dümen PID Türev Tekmesi (Derivative Kick in Yaw PID): Rota planlayıcı aniden yepyeni bir hedef yön açısı verdiğinde, PID formülündeki hata türevi (de/dt) bir anda devasa bir sıçrama yaparak dümene ani ve sert bir mekanik darbe vurulmasına sebep olur.
+
+Log Dosyası İsimlendirmesinde Üzerine Yazma Hatası (Hardcoded Log Overwrite Risk): Video ve telemetri kayıt dosyası isimlerine benzersiz bir zaman damgası (timestamp) veya test numarası tam entegre edilmediği için, sistem her yeniden başlatıldığında eski başarılı testlerin kara kutu kayıtları kalıcı olarak silinir.
+
+NMEA Checksum Kontrolü Eksikliği (Missing GPS NMEA Checksum Validation): sensors.c içinde GPS modülünden gelen ham UART karakterleri ayrıştırılırken satır sonu checksum doğrulaması yapılmadığından, hatta oluşacak tek bir gürültü bota hatalı koordinat vererek rotayı okyanusa fırlatabilir.
+
+Dar Kanallarda APF Yerel Salınım Tuzağı (Narrow Channel APF Oscillation): Bot yan yana duran iki engel dubasının tam ortasındaki dar koridora girdiğinde, sol ve sağ itici kuvvetlerin aşırı yüksek şiddette yarışması botun ileri gitmek yerine koridorda çılgınca sağa sola titremesine sebep olur.
+
+Kamera Görüntü Donması Denetimi Eksikliği (Video Stream Freeze Vulnerability): USB kamera donanımsal olarak kilitlenip işletim sistemine sürekli aynı sabit kareyi (frozen frame) göndermeye başladığında, yazılım kör olduğunu anlamayıp bota sonsuza kadar sabit gidiyormuş gibi gaz vermeye devam eder.
+
+UART DMA Hata Kesmesi Yönetimi Eksikliği (Unhandled UART DMA Framing Error): STM32 seri haberleşme hattında oluşabilecek tek bir çerçeveleme (framing) veya gürültü hatası DMA donanımını kilitlediğinde, hata temizleme kesmesi yazılmadığı için telefonla iletişim kalıcı olarak kopacaktır.
+
+Kamikaze Modunda Costmap Körlüğü Riski (Blind Charge Hazard in Kamikaze): mission_control.py kamikaze moduna geçtiğinde sadece kırmızı dubaya kilitlenip yerel engel haritasını tamamen devre dışı bıraktığı için, kırmızı duba yolundaki araya kaynamış sarı engellere körlemesine çarpabilir.
+
+Fırçasız Motorların Doğrusal Olmayan İtki Eğrisi (Non-Linear Thrust-to-PWM Mapping): control.c formüllerinin ürettiği lineer güç yüzdesi ile fırçasız motorların su altındaki gerçek RPM/itki eğrisi doğrusal olmadığından, orta gaz seviyelerinde planlanan rota doğruluğu teoridekinden sapacaktır.
+
+Ortak Şase Gürültüsünün Analog Ölçümleri Bozması (Ground Loop Noise on Battery ADC): Yüksek akım çeken propalsiyon motorlarının eksisiyle STM32'nin analog şasesi izolasyon olmadan birleştiğinde, motor gürültüsü batarya ADC okumalarını sarsarak hatalı voltaj failsafe'leri tetikler.
+Python Döngüsünde İş İş parçacığı Çakışması (Race Condition on Position Data): main.py içindeki seri okuma thread'i enlem/boylam verilerini güncellerken, ana döngünün aynı anda bu verilere korumasız erişmesi anlık rota sapmalarına yol açabilir.
+
+Kamera Sürücüsü Bloklama Riski (V4L2 Video Capture Blocking): Linux ortamında USB kamera anlık koptuğunda OpenCV VideoCapture fonksiyonu sürücü seviyesinde saniyelerce bloke olarak tüm otonomi akışını dondurabilir.
+
+Costmap Hücre Atlamalarında Titreşim Tuzağı (Grid Cell Quantization Jitter): Duba piksellerindeki anlık oynamaların costmap üzerinde farklı hücreleri tetiklemesi, APF bileşke kuvvetinin yönünde sürekli mikro titremeler yaratır.
+
+Kuvvet Alanlarında Belirsizlik Hatası (NaN/Inf Force Handling Missing): Duba ile botun yerel koordinatları tam olarak çakıştığında mesafe sıfır olacağı için APF yön matrisinde NaN (tanımsız) değeri oluşur ve motor komutlarını kilitler.
+
+Disk Dolu Hatasında Sistem Çökmesi (Uncaught Storage Exception Risk): AsyncLoggerManager diskin veya SD kartın dolması durumunda fırlatılacak yazma hatalarını yakalamadığı için tüm otonomi ana sürecini çökertebilir.
+
+Yeniden Bağlanmada USB İzin Engeli (Serial Port Permission Reset): Seri port koptuktan sonra Linux sistemi portu yeniden oluştururken (/dev/ttyACM0) kullanıcı izinleri sıfırlanırsa, kod "Permission Denied" hatasıyla sonsuz döngüde kalır.
+
+Kısıtlı Costmap Görüş Alanı Darboğazı (Costmap Range Look-ahead Constraint): Costmap boyutunun 40 metreyle sınırlı olması, İDA maksimum hızda giderken önündeki engelleri fark edip kaçması için sisteme 10 saniyeden az bir tepki süresi bırakır.
+
+Çöp Toplayıcının Zamanlama Sekmesi (Garbage Collection Micro-stutters): Ana döngüde her karede çağrılan gc.collect() fonksiyonu, YOLO çıkarım süresinin tavan yaptığı anlarda mikro takılmalara yol açarak 24 FPS kararlılığını bozar.
+
+Simetrik Engel Kapanlarında Yerel Minimum Tuzağı (Symmetric Obstacle Trap): Bot ucu kapalı U şeklinde bir duba dizilimine tam ortadan girdiğinde, sol ve sağ itici kuvvetler birbirini sıfırlayacağı için İDA engelin önünde çakılı kalır.
+
+Rota Yumuşatma Eksikliği (Lack of Path Smoothing Filter): APF çıktısı olan anlık yön komutlarının bir eğri düzleştiriciden (Spline/Bezier) geçirilmemesi, motorların su üzerinde sürekli keskin ve sarsıntılı tepkiler vermesine neden olur.
+
+Rüzgar Altı ve Rüzgar Üstü Dinamikleri Farkı (Asymmetric Wind Drift Integral): CTE integral terimi botun rüzgarı sancaktan veya iskeleden alırken yapacağı farklı sürüklenme eylemsizliklerini doğrusal kabul ettiği için rotaya oturmada salınımlara yol açar.
+
+Görev Geçişlerinde Eski Telemetri Sıçraması (Stale Telemetry on State Transition): Parkur 1 bittiğinde hedef indeks sıfırlanırken eğer o milisaniyede telemetri paketi gecikirse, mesafe hesabı yeni parkurun ilk noktasını eski konuma göre hesaplayıp ani savrulma yaptırır.
+
+FreeRTOS Float İşlemlerinde Atomiklik Eksikliği (Non-Atomic Float Access Risk): STM32 üzerinde latest_commands yapısındaki float değerler güncellenirken kesmeye uğrarsa, işlemci veriyi yarım okuyarak navigasyon döngüsüne tamamen bozuk bir sayı gönderebilir.
+
+UART Çerçeveleme Hatası Kilidi (Unhandled UART Overrun Flag): STM32 UART donanımında elektromanyetik gürültü sebebiyle oluşabilecek "Framing Error" kesme içinde temizlenmezse, telefonla olan tüm seri haberleşme kalıcı olarak bloke olur.
+
+Navigasyon Görevi Yığın Taşması Riski (Navigation Task Stack Overflow): StartNavigationTask içinde trigonometrik ve matris tabanlı float matematik kütüphaneleri yoğun kullanıldığından, ayrılan kısıtlı stack boyutu anlık taşarak mikrodenetleyiciyi kilitleyebilir.
+
+İtki Doyumunda Yön Kabiliyeti Kaybı (Thrust Saturation Steering Loss): control.c içinde motor güç limitleri aşıldığında doğrudan kırpma yapılması, bot tam gaz giderken dümene asıldığında differential (çift motor) oranını bozarak botun dönmesini engeller.
+
+Protokol Paket Boyutu Güvenlik İhmali (Missing Payload Length Validation): Gelen paketin payload_len değeri doğrulanmadan doğrudan memcpy ile yapıya kopyalanması, gürültülü bir paketin RAM üzerinde arabellek taşması (buffer overflow) yaratmasına sebep olabilir.
+
+Watchdog Sisteminin Kısmi Görev Körlüğü (IWDG Task Isolation Defect): Bağımsız Watchdog donanımı sadece ana döngüye veya tek bir göreve bağlı olduğundan, arka plandaki Emniyet veya Sensör görevi kilitlense bile işlemciyi resetleyemez.
+
+Yüksek Akım Kablolarının Manyetik Alan Gürültüsü (EMI on Magnetometer Heading): Motor Sürücülerinden (ESC) geçen yüksek akım pusula sensörünün (manyetometre) etrafında yapay bir manyetik alan yaratarak botun mutlak kuzey yönünü tamamen saptırır.
+
+Düşük Hızlarda GPS Rota Açısı Yanılgısı (GPS COG Inaccuracy at Low Speeds): İDA hızı 0.5 m/s altına düştüğünde GPS'ten gelen rota açısı (COG) tamamen saçmalayacağı için, bu esnada yapılan pusula hizalamaları pruva açısını kalıcı olarak bozar.
+
+Gövde Titreşimlerinin Eğim Hesaplamasını Bozması (Hull Vibration Noise on Tilt App): Motorların ve pervanelerin yarattığı yüksek frekanslı mekanik titreşimler, IMU eğim filtresini kirleterek İDA'nın su üzerindeki gerçek pitch/roll açısını yanlış bulmasına neden olur.
+
+GPS Kayıplarında Yedek Konum Kestirimi Eksikliği (Lack of Dead Reckoning Fallback): GPS kilidi tamamen koptuğunda motor akımı ve pusula yönü üzerinden yapay bir konum tahmini (Dead Reckoning) üretilmediği için APF planlayıcı tamamen işlevsiz kalır.
+
+Sığlık ve Kıyı Sınırlarında COLREGs Çelişkisi (COLREGs vs Shoreline Boundary Conflict): Önündeki sarı engelden kaçmak için her zaman sağa (Sancak) kıracak şekilde tasarlanan sistem, sağ tarafta sığlık veya kıyı şeridi olduğunda botu tehlikeye atacaktır.
+
+Çoklu Hedef Durumunda Kamikaze Kilitlenme Karmaşası (Ambiguous Target Selection in Kamikaze): Kamera kadrajına aynı anda iki adet kırmızı duba girdiğinde, sistem en yakın olanı seçmek yerine döngüdeki ilk nesneye kilitleneceği için yarışma stratejisini bozabilir.
+
+Kamera Akış Kesintisinde Hayalet Maliyet Sürüşü (Video Outage Ghost Costmap Drive): Kamera koptuğunda veya donduğunda costmap üzerindeki engeller sönümlenene kadar geçen birkaç saniyede bot eski verilere göre körlemesine manevra yapmaya devam eder.
+
+Dinamik Eşik Filtresi Eksikliği ve Dalga Köpüğü Engeli (Wave Foam Contour False Positive): Yedek HSV algılama kanalı durağan su şartlarına göre ayarlandığından, pervanenin veya dalgaların yarattığı beyaz köpükleri sahte engel zannederek botu rotasından saptırabilir.
+
+APF Çekici Kuvvet Katsayısının Yakınlık Körlüğü (Attractive Force Scaling Issue): Bot waypoint noktasına çok yaklaştığında çekici kuvvet mesafeyle birlikte aşırı küçüldüğü için, engellerden gelen itici güç botu hedefin yanından tamamen uzaklaştırabilir.
+
+STM32 Seri Kesme Tamponunun Yavaş Boşalması (Overhead in UART Interrupt Service): UART kesme fonksiyonu (ISR) içerisinde byte'ları ring buffer'a atarken harcanan sürenin uzun olması, yüksek baudrate hızlarında donanımsal veri kayıplarına yol açabilir.
+
+Güneş Işığının Doğrudan Merceğe Gelme Parlaması (Lens Flare Blindness Outage): Bot batıya veya doğuya doğru dönerken güneş ışınlarının doğrudan kameraya vurması YOLO modelinin ve renk filtresinin dubaları tamamen kaçırmasına neden olur.
+
+Kritik Batarya Seviyesinde Telemetri Bildirim Eksikliği (Failsafe Broadcast Lack): Bot batarya voltajı yüzünden failsafe durumuna geçtiğinde, yer kontrol istasyonuna acil durum kodunu gönderemeden sistem kilitlenirse sahada botun neden durduğu anlaşılamaz.
+Yoğun Bellek Tahsisi ve Çöp Toplayıcı Yükü (GC Allocation Spike): costmap.py içindeki get_serialized_grid fonksiyonu her karede sıfırdan devasa dinamik listeler ürettiği için Python'ın heap belleğinde dalgalanma yaratır ve işlemciyi yorar.
+
+Perspektif Yanılgısında Sabit Odak Uzaklığı Tuzağı (Autofocus Distance Error): detector.py içindeki mesafe hesabı sabit bir piksel değerine güvendiğinden, kameranın anlık otomatik odaklama yaptığı durumlarda duba uzaklıkları tamamen yanlış hesaplanır.
+
+Kamera Sürücüsü Seviyesinde Bloklanma Riski (V4L2 Capture Blocking Threat): USB kamera kablosu sahada anlık yerinden çıkarsa, OpenCV VideoCapture fonksiyonu işletim sistemi sürücü seviyesinde saniyelerce bloke olarak tüm otonomi akışını dondurabilir.
+
+Hücre Atlamalarında Yön Titreşimi Tuzağı (Costmap Grid Quantization Jitter): Duba piksellerindeki anlık mikro oynamaların costmap üzerinde farklı hücre koordinatlarını tetiklemesi, APF bileşke kuvvetinin yönünde sürekli bir titreme (jitter) yaratır.
+
+Kuvvet Alanlarında Belirsizlik ve Kilitlenme Hatası (NaN/Inf Force Handling Missing): Duba ile botun yerel koordinatları tam olarak üst üste bindiğinde mesafe sıfır olacağı için APF yön matrisinde NaN (tanımsız) değeri oluşur ve tüm motor komutlarını kilitler.
+
+Yeniden Bağlanmada USB İzin Engeli (Serial Port Permission Reset Trap): Seri port koptuktan sonra Linux sistemi portu yeniden oluştururken kullanıcı izinleri sıfırlanırsa, kod "Permission Denied" hatasıyla sonsuz döngüde çakılı kalır.
+
+Rüzgar Altı ve Rüzgar Üstü Dinamikleri Farkı (Asymmetric Wind Drift Jitter): Rüzgar sapma integral terimi, botun rüzgarı sancaktan veya iskeleden alırken yapacağı farklı sürüklenme eylemsizliklerini doğrusal kabul ettiği için rotaya oturmada salınımlara yol açar.
+
+Kısıtlı Costmap Görüş Alanı Darboğazı (Costmap Range Look-ahead Constraint): Yerel harita boyutunun 40 metreyle sınırlı olması, İDA yüksek süratle giderken önündeki engelleri fark edip kaçması için sisteme 10 saniyeden az bir emniyetli tepki süresi bırakır.
+
+Simetrik Engel Kapanlarında Yerel Minimum Tuzağı (Symmetric Obstacle Trap): Bot ucu kapalı U şeklinde bir duba dizilimine tam ortadan girdiğinde, sol ve sağ itici kuvvetler birbirini sıfırlayacağı için İDA engelin önünde çakılı kalır.
+
+Görev Geçişlerinde Eski Telemetri Sıçraması (Stale Telemetry on State Transition): Parkur 1 bittiğinde hedef indeks sıfırlanırken eğer o milisaniyede telemetri paketi gecikirse, mesafe hesabı yeni parkurun ilk noktasını eski konuma göre hesaplayıp ani savrulma yaptırır.
+
+FreeRTOS Float İşlemlerinde Atomiklik Eksikliği (Non-Atomic Float Access Risk): STM32 üzerinde latest_commands yapısındaki float değerler güncellenirken kesmeye uğrarsa, işlemci veriyi yarım okuyarak navigasyon döngüsüne tamamen bozuk bir sayı gönderebilir.
+
+UART Çerçeveleme Hatası Kilidi (Unhandled UART Overrun Flag): STM32 UART donanımında elektromanyetik gürültü sebebiyle oluşabilecek "Framing Error" kesme içinde temizlenmezse, telefonla olan tüm seri haberleşme kalıcı olarak bloke olur.
+
+Navigasyon Görevi Yığın Taşması Riski (Navigation Task Stack Overflow): StartNavigationTask içinde trigonometrik ve matris tabanlı float matematik kütüphaneleri yoğun kullanıldığından, ayrılan kısıtlı stack boyutu anlık taşarak mikrodenetleyiciyi kilitleyebilir.
+
+İtki Doyumunda Yön Kabiliyeti Kaybı (Thrust Saturation Steering Loss): control.c içinde motor güç limitleri aşıldığında doğrudan kırpma yapılması, bot tam gaz giderken dümene asıldığında differential (çift motor) oranını bozarak botun dönmesini engeller.
+
+Protokol Paket Boyutu Güvenlik İhmali (Missing Payload Length Validation): Gelen paketin payload_len değeri doğrulanmadan doğrudan memcpy ile yapıya kopyalanması, gürültülü bir paketin RAM üzerinde arabellek taşması (buffer overflow) yaratmasına sebep olabilir.
+
+Watchdog Sisteminin Kısmi Görev Körlüğü (IWDG Task Isolation Defect): Bağımsız Watchdog donanımı sadece ana döngüye veya tek bir göreve bağlı olduğundan, arka plandaki Emniyet veya Sensör görevi kilitlense bile işlemciyi resetleyemez.
+
+Yüksek Akım Kablolarının Manyetik Alan Gürültüsü (EMI on Magnetometer Heading): Motor Sürücülerinden (ESC) geçen yüksek akım pusula sensörünün (manyetometre) etrafında yapay bir manyetik alan yaratarak botun mutlak kuzey yönünü tamamen saptırır.
+
+Düşük Hızlarda GPS Rota Açısı Yanılgısı (GPS COG Inaccuracy at Low Speeds): İDA hızı 0.5 m/s altına düştüğünde GPS'ten gelen rota açısı (COG) tamamen saçmalayacağı için, bu esnada yapılan pusula hizalamaları pruva açısını kalıcı olarak bozar.
+
+Gövde Titreşimlerinin Eğim Hesaplamasını Bozması (Hull Vibration Noise on Tilt App): Motorların ve pervanelerin yarattığı yüksek frekanslı mekanik titreşimler, IMU eğim filtresini kirleterek İDA'nın su üzerindeki gerçek pitch/roll açısını yanlış bulmasına neden olur.
+
+GPS Kayıplarında Yedek Konum Kestirimi Eksikliği (Lack of Dead Reckoning Fallback): GPS kilidi tamamen koptuğunda motor akımı ve pusula yönü üzerinden yapay bir konum tahmini (Dead Reckoning) üretilmediği için APF planlayıcı tamamen işlevsiz kalır.
+
+Sığlık ve Kıyı Sınırlarında COLREGs Çelişkisi (COLREGs vs Shoreline Boundary Conflict): Önündeki sarı engelden kaçmak için her zaman sağa (Sancak) kıracak şekilde tasarlanan sistem, sağ tarafta sığlık veya kıyı şeridi olduğunda botu tehlikeye atacaktır.
+
+Çoklu Hedef Durumunda Kamikaze Kilitlenme Karmaşası (Ambiguous Target Selection in Kamikaze): Kamera kadrajına aynı anda iki adet kırmızı duba girdiğinde, sistem en yakın olanı seçmek yerine döngüdeki ilk nesneye kilitleneceği için yarışma stratejisini bozabilir.
+
+Kamera Akış Kesintisinde Hayalet Maliyet Sürüşü (Video Outage Ghost Costmap Drive): Kamera koptuğunda veya donduğunda costmap üzerindeki engeller sönümlenene kadar geçen birkaç saniyede bot eski verilere göre körlemesine manevra yapmaya devam eder.
+
+Dinamik Eşik Filtresi Eksikliği ve Dalga Köpüğü Engeli (Wave Foam Contour False Positive): Yedek HSV algılama kanalı durağan su şartlarına göre ayarlandığından, pervanenin veya dalgaların yarattığı beyaz köpükleri sahte engel zannederek botu rotasından saptırabilir.
+
+APF Çekici Kuvvet Katsayısının Yakınlık Körlüğü (Attractive Force Scaling Issue): Bot waypoint noktasına çok yaklaştığında çekici kuvvet mesafeyle birlikte aşırı küçüldüğü için, engellerden gelen itici güç botu hedefin yanından tamamen uzaklaştırabilir.
+
+STM32 Seri Kesme Tamponunun Yavaş Boşalması (Overhead in UART Interrupt Service): UART kesme fonksiyonu (ISR) içerisinde byte'ları ring buffer'a atarken harcanan sürenin uzun olması, yüksek baudrate hızlarında donanımsal veri kayıplarına yol açabilir.
+
+Güneş Işığının Doğrudan Merceğe Gelme Parlaması (Lens Flare Blindness Outage): Bot batıya veya doğuya doğru dönerken güneş ışınlarının doğrudan kameraya vurması YOLO modelinin ve renk filtresinin dubaları tamamen kaçırmasına neden olur.
+
+Kritik Batarya Seviyesinde Telemetri Bildirim Eksikliği (Failsafe Broadcast Lack): Bot batarya voltajı yüzünden failsafe durumuna geçtiğinde, yer kontrol istasyonuna acil durum kodunu gönderemeden sistem kilitlenirse sahada botun neden durduğu anlaşılamaz.
+
+Geri Vites Desteği Olmaması ve Sıkışma Riski (Lack of Reverse Thrust Support): STM32 motor miksajı ve APF planlayıcı sadece ileri yönlü itki üretecek şekilde tasarlandığından, İDA ucu kapalı bir engel koyuna girdiğinde geri vitese takıp çıkamaz ve orada sıkışır.
+
+Sonsuz Log Kuyruğu ve Bellek Tüketimi (Unbounded Logger Queue Risk): AsyncLoggerManager içindeki kuyruk yapısı üst sınır olmadan çalıştığından, diske yazma hızının yavaşladığı anlarda RAM belleği şişirerek Python uygulamasının kilitlenmesine neden olabilir.
+
+YOLO Sınıf İndeks Karışıklığı Riski (Hardcoded Class Index Vulnerability): detector.py içerisinde model çıktılarının sınıf indeksleri json konfigürasyonuna tam olarak bağlanmadığından, yeni eğitilmiş bir ONNX modeli yüklendiğinde turuncu ve sarı dubaların sınıfları birbiriyle karışabilir.
+
+Failsafe Durumunda Pervane Kavitasyon Riski (Aggressive Braking Cavitation): mission_control.py failsafe durumuna geçtiğinde motor hızını anında sıfıra set ettiği için, yüksek hızda giden botun arkasında devasa bir köpürme oluşur ve yön kararlılığı bir anlık tamamen kaybolur.
+
+Güneş Yansımasında Beyaz Dengesi Körlüğü (Auto Exposure Blindness): Kamera sürücüsünde otomatik pozlama ve beyaz dengesi kilitlenmediği için, bot aniden güneşe doğru döndüğünde duba renkleri patlayacak ve hem YOLO hem HSV sistemi nesneleri kaçıracaktır.
+
+STM32 Başlangıç Kesme Zamanlaması Hatası (Early Interrupt Initialization Bug): FreeRTOS scheduler başlatılmadan önce UART kesmesi tetiklenirse, gelen ilk byte işletim sistemi hazır olmadığı için çekirdek kilitlenmesine sebep olabilir.
+
+Homografi Matrisi Eksikliği ve Perspektif Yanılgısı (Perspective Distance Error): detector.py içindeki mesafe hesabı sadece duba piksel genişliğine baktığından, bot dalgalarla öne veya arkaya doğru her yalpaladığında dubaların mesafesi yapay olarak değişecektir.
+
+Dinamik Engel Yarıçapı Esneksizliği (Static Inflation Radius Issue): costmap.py içindeki şişirme yarıçapı botun anlık hızından bağımsız sabit tutulduğu için, bot yüksek hızla giderken engellere çok yakın geçerek tehlike yaratacaktır.
+
+Log Dosyası Yazma Hatasında Ana Döngü Çökmesi (Log Write Exception Trap): telemetry_logger.py diskin dolması veya yazma izni hatası gibi durumlarda oluşabilecek I/O istisnalarını sarmalamazsa, bir log hatası yüzünden tüm otonomi çökebilir.
+
+FreeRTOS Öncelik Terslemesi Riski (Priority Inversion Threat): Düşük öncelikli sensör görevi ile yüksek öncelikli seyrüsefer görevi paylaşılan bir donanım hattını kilit olmadan kullandığında öncelik terslemesi yaşanıp kritik görevler gecikebilir.
+
+APF İtici Kuvvet Sınır Doyumu Eksikliği (Repulsive Force Exploding): Bot bir dubaya aşırı yaklaştığında payda küçüldüğü için itici kuvvet matematiksel olarak sonsuza yaklaşır ve motor kontrolörüne anlamsız, devasa PWM komutları gönderilmesine yol açar.
+
+STM32 Heap Bellek Fragmantasyonu (Dynamic Allocation Fragmentation): FreeRTOS üzerinde eğer görevler veya kuyruklar dinamik hafıza (pvPortMalloc) ile sürekli silinip tekrar açılıyorsa, zamanla heap fragmante olarak mikrodenetleyicinin aniden kilitlenmesine yol açar.
+
+Acil Stop Butonunun Döngüsel Kontrol Gecikmesi (Polling Kill-Switch Delay): Donanımsal acil durdurma emrinin harici bir kesme (EXTI) yerine yazılımsal emniyet görevi döngüsü içinde periyodik taranması kritik milisaniyelik gecikmelere sebep olur.
+
+Su Geçirmez Hazne İçi Termal Darboğaz Riski (Thermal Throttling on Smartphone): OnePlus 6 işlemcisinin kapalı hazne içinde sürekli YOLO modeli koşturması aşırı ısınmaya (thermal throttling) yol açarak FPS'in aniden 2-3 seviyesine düşmesine ve botun tamamen kör kalmasına sebep olur.

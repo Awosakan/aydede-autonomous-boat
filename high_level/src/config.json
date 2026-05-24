@@ -1,0 +1,46 @@
+{
+    "p1_wps": [
+        [
+            40.732501,
+            29.831201
+        ],
+        [
+            40.732702,
+            29.831502
+        ],
+        [
+            40.732903,
+            29.831203
+        ],
+        [
+            40.732704,
+            29.830904
+        ]
+    ],
+    "p2_wps": [
+        [
+            40.7331,
+            29.8315
+        ],
+        [
+            40.7335,
+            29.8315
+        ]
+    ],
+    "home_wp": [
+        40.732501,
+        29.831201
+    ],
+    "nominal_speed_ms": 1.3,
+    "max_speed_ms": 2.0,
+    "min_speed_ms": 0.5,
+    "waypoint_tolerance_m": 0.6,
+    "inflation_radius_m": 1.0,
+    "costmap_size_m": 40.0,
+    "costmap_resolution": 0.25,
+    "target_color": "target_red",
+    "state_timeout_seconds": 300.0,
+    "max_speed_accel": 0.8,
+    "max_yaw_rate": 45.0,
+    "usb_log_dir": null
+}

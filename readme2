@@ -1,0 +1,84 @@
+# YARIŞMA GÜNÜ YAPILMASI GEREKENLER LİSTESİ (RUNBOOK)
+
+Bu yönerge, İDA'nın (İnsansız Deniz Aracı) yarışma günü suya indirilmeden önce ve yarışma esnasında yapılacak operasyonel adımları ve parametre yapılandırmalarını listeler.
+
+---
+
+## 1. Seyir Öncesi Konfigürasyon Yapılandırması (`config.json`)
+
+Yarışma alanı koordinatları ve kuralları hakem heyeti tarafından açıklandığında, İDA'nın üzerindeki kontrol bilgisayarında `high_level/src/config.json` dosyasını açarak aşağıdaki parametreleri güncelleyin.
+
+### 1.1. GPS Rota Koordinatlarının Tanımlanması (Parametre 1)
+Hakemlerin tanımladığı kapı ve engel parkuru koordinatlarını girin:
+- `"p1_wps"`: Parkur 1 (Nokta Takip) için hakemler tarafından verilen sıralı GPS koordinat listesi `[[lat, lon], ...]`.
+- `"p2_wps"`: Parkur 2 (Engelden Kaçış) için hakemler tarafından verilen sıralı GPS koordinat listesi `[[lat, lon], ...]`.
+- `"home_wp"`: Otonom görev bittiğinde veya acil geri dönüş modunda İDA'nın döneceği ev/başlangıç koordinatı `[lat, lon]`.
+
+### 1.2. Kamikaze Hedef Duba Renginin Belirlenmesi (Parametre 2)
+Hakemler tarafından vurulması istenen duba rengi açıklandığında `"target_color"` parametresini güncelleyin:
+- **Simülasyon Modu (SITL):** Varsayılan olarak `"target_red"` (kırmızı) olarak kalmalıdır.
+- **Kırmızı Duba için:** `"target_color": "target_red"`
+- **Yeşil Duba için:** `"target_color": "target_green"`
+- **Mavi Duba için:** `"target_color": "target_blue"`
+
+*Not: İDA'nın 3 aşamalı Kamikaze Hedef Kaybı Stratejisi (Target Lost), seçilen duba rengi hangisi olursa olsun (Kırmızı, Yeşil veya Mavi) dinamik ve jenerik olarak çalışacaktır.*
+
+### 1.3. Harici USB Bellek Loglama Dizin Yapılandırması
+Jüriye teslim edilecek 3 adet dosya çıktısının (`dosya1_kamera.mp4`, `dosya2_telemetri.csv`, `dosya3_costmap.jsonl`) harici bir USB belleğe doğrudan yazılması isteniyorsa:
+- USB belleği telefona/hub üzerine takın ve mount edilen dizin yolunu öğrenin (Örn: `/mnt/media_rw/USB_DISK`).
+- `config.json` dosyasındaki `"usb_log_dir"` değerini bu yol ile güncelleyin:
+  - `"usb_log_dir": "/mnt/media_rw/USB_DISK"`
+- **Yedekleme ve Failsafe Güvenliği:** USB bellek yazma hızı anlık düşer veya bağlantısı koparsa, otonom yazılımı kilitlenmeden logları dahili depolamadaki `./ida_logs` klasörüne de eş zamanlı kaydetmeye devam eder (F-35 Failsafe standardı çift katmanlı kayıt).
+- Görev bitiminde USB belleği doğrudan çıkarıp jüri heyetine teslim edebilirsiniz.
+
+---
+
+## 2. Sistem Başlatma ve Donanım Kontrolü
+
+1. **Güç Bağlantısı:** Bataryaları bağlayın. ESC (Motor Sürücüler), STM32 ve ana bilgisayarın enerjilendiğinden emin olun.
+2. **Kablo Bağlantısı:** Telefon veya bilgisayarın USB kablo ile STM32'ye bağlı olduğunu teyit edin.
+3. **Kamera Mercek Kontrolü:** Kameranın önünün temiz, su damlasız ve buğusuz olduğunu kontrol edin.
+4. **GPS Kilidi Kontrolü:** İDA'nın açık alanda GPS uydularına kilitlendiğini ve telemetry üzerindeki `gps_lock` değerinin `1` olduğunu teyit edin.
+
+---
+
+## 3. Servisin Çalıştırılması ve Görevin Başlatılması
+
+1. Terminali açın ve otonom yazılımının bulunduğu dizine gidin:
+   ```bash
+   cd /aydede/high_level/src/
+   ```
+2. Ana otonom programı başlatın:
+   ```bash
+   python3 main.py /dev/ttyACM0 115200
+   ```
+3. İDA'yı başlangıç noktasına (`home_wp`) yakın şekilde suya bırakın.
+4. Yer Kontrol İstasyonu (YKİ) üzerinden aracı **AUTO** moduna alarak görevi tetikleyin.
+
+---
+
+## 4. STM32 Otopilot Ön Seyir Kontrolleri ve Donanım Yapılacaklar Listesi
+
+İDA'nın alçak seviye otopilot donanımının (STM32F405RGT6) suya indirilmeden önce sorunsuz çalıştığından emin olmak için aşağıdaki adımları sırasıyla kontrol edin.
+
+### 4.1. Donanımsal Bağlantıların ve Pinlerin Doğrulanması
+Fiziksel pin eşlemelerinin `STM32/Core/Inc/main.h` ve `main.c` içerisindeki tanımlarla uyuştuğunu doğrulayın:
+- `[ ]` **Sol & Sağ Motor PWM (PA6 & PA7):** ESC sinyal kablolarının sırasıyla TIM3 CH1 (Sol) ve TIM3 CH2 (Sağ) pinlerine bağlı olduğunu doğrulayın.
+- `[ ]` **I2C1 (PB6 & PB7):** MPU6050/9250 IMU sensörü SCL ve SDA hatlarını kontrol edin (PB6->SCL, PB7->SDA).
+- `[ ]` **USART1 (PA9 & PA10):** OnePlus 6 / Android seri köprü modülünün bağlı olduğundan emin olun (PA9->TX, PA10->RX).
+- `[ ]` **USART2 (PA2 & PA3):** GPS alıcısının TX/RX uçlarının bağlı olduğunu kontrol edin (PA2->TX, PA3->RX).
+- `[ ]` **ADC1 (PA1):** Batarya voltaj bölücü çıkışının bu pine bağlı olduğundan emin olun.
+- `[ ]` **Fiziksel Acil Durdurma (PC13):** Acil durum butonunun PC13 EXTI kesme hattına (Düşen kenar / Pull-up) bağlandığını kontrol edin.
+
+### 4.2. Yazılım Derleme ve Yükleme Adımları
+- `[ ]` **Derleme:** `aydede/STM32/` dizininde `make` komutunu çalıştırarak projenin hatasız derlendiğini ve `build/aydede_otopilot.hex` ile `.bin` dosyalarının oluştuğunu teyit edin.
+- `[ ]` **Yükleme (Flashing):** ST-Link, OpenOCD veya STM32CubeProgrammer vasıtasıyla derlenen firmware dosyasını STM32F405RGT6 mikrodenetleyicisine yükleyin.
+
+### 4.3. Yarışma Öncesi Emniyet Doğrulamaları (Pre-flight Safety Checks)
+- `[ ]` **Fiziksel Acil Durdurma Butonu Testi:** Sistem enerjili ve çalışır durumdayken acil durdurma butonuna basın. Motorların anında durduğunu (`TIM3->CCR1` ve `TIM3->CCR2` değerlerinin 1500us neutral'a çekildiğini) ve otopilot modunun `MODE_EMERGENCY` modunda kilitlendiğini teyit edin.
+- `[ ]` **Batarya Voltaj Kalibrasyonu:** Telemetriden gelen batarya voltajını multimetre ile ölçülen fiziksel batarya voltajı ile karşılaştırın. Gerekirse `sensors.c` içerisindeki `VOLTAGE_DIVIDER_RATIO` (varsayılan: 11.0f) direnç bölücü oranını kalibre edin.
+- `[ ]` **Voltaj Çökmesi (Battery Sag) Testi:** Batarya voltajının kritik eşik olan `10.5V` altında 3 saniyeden uzun kalması durumunda motorların otomatik kesilip otopilotun `MODE_FAILSAFE` moduna geçtiğini doğrulayın.
+- `[ ]` **Haberleşme Watchdog Testi:** OnePlus 6 bağlantı kablosunu çıkarın. 500 ms içinde motorların anında durup (`MODE_FAILSAFE` konumu) otopilotun motor itkilerini kestiğini teyit edin.
+- `[ ]` **Pusula / Yön Sensörü Doğrulaması:** Tekneyi kendi ekseni etrafında döndürün. Telemetriden okunan `yaw` açısının sıçrama yapmadan kararlı bir şekilde (0-360 derece arası) güncellendiğini doğrulayın.
+- `[ ]` **Yosun Dolanması / Motor Stall Koruma Doğrulaması:** Eğer otonom veya manuel modda iken dümene 0.2'lik itki farkı verilip motorlar çalıştırılmasına rağmen, İDA yosun sarma veya takılma nedeniyle 4 saniye boyunca yaw açısını en az 1 derece değiştiremezse, motor koruması için sistemin otomatik olarak `MODE_FAILSAFE` moduna girdiğini bilin.
+
