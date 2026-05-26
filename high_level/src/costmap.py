@@ -143,49 +143,49 @@ class LocalCostmap:
         right_blocked = self.is_right_blocked(max_dist_m=6.0)
         
         # 1. Kapı Dubaları (Orange Gates) İtme Hesabı (Simetrik - Dubaların Ortasından Geçiş Sağlar)
-        for r in range(self.grid_size):
-            for c in range(self.grid_size):
-                cost = self.grid_gates[r, c]
-                if cost > 30:
-                    dx_m = (self.center_idx - r) * self.resolution
-                    dy_m = (c - self.center_idx) * self.resolution
-                    dist = math.sqrt(dx_m**2 + dy_m**2)
-                    if dist < 0.1: continue
-                    
-                    if dist <= influence_distance_gates:
-                        force_mag = K_repulsive * (cost / 100.0) * ((1.0 / dist) - (1.0 / influence_distance_gates)) * (1.0 / dist**2)
-                        # Simetrik itme (Botu tam zıt yöne iter, böylece sol ve sağ duba kuvvetleri ortada dengelenir)
-                        rep_x += - (dx_m / dist) * force_mag
-                        rep_y += - (dy_m / dist) * force_mag
+        # O(N^2) tam ızgara taraması yerine sadece maliyeti 30'dan büyük hücreleri NumPy ile bulup döngüye sokuyoruz (C6 optimizasyonu)
+        rows_g, cols_g = np.where(self.grid_gates > 30)
+        for r, c in zip(rows_g, cols_g):
+            cost = self.grid_gates[r, c]
+            dx_m = (self.center_idx - r) * self.resolution
+            dy_m = (c - self.center_idx) * self.resolution
+            dist = math.sqrt(dx_m**2 + dy_m**2)
+            if dist < 0.1: continue
+            
+            if dist <= influence_distance_gates:
+                force_mag = K_repulsive * (cost / 100.0) * ((1.0 / dist) - (1.0 / influence_distance_gates)) * (1.0 / dist**2)
+                # Simetrik itme (Botu tam zıt yöne iter, böylece sol ve sağ duba kuvvetleri ortada dengelenir)
+                rep_x += - (dx_m / dist) * force_mag
+                rep_y += - (dy_m / dist) * force_mag
                         
         # 2. Sarı Engeller (Yellow Obstacles) İtme Hesabı (Asimetrik COLREGs - Sağa Sancak Kaçışı Sağlar)
-        for r in range(self.grid_size):
-            for c in range(self.grid_size):
-                cost = self.grid_obstacles[r, c]
-                if cost > 30:
-                    dx_m = (self.center_idx - r) * self.resolution
-                    dy_m = (c - self.center_idx) * self.resolution
-                    dist = math.sqrt(dx_m**2 + dy_m**2)
-                    if dist < 0.1: continue
+        # O(N^2) tam ızgara taraması yerine sadece maliyeti 30'dan büyük hücreleri NumPy ile bulup döngüye sokuyoruz (C6 optimizasyonu)
+        rows_o, cols_o = np.where(self.grid_obstacles > 30)
+        for r, c in zip(rows_o, cols_o):
+            cost = self.grid_obstacles[r, c]
+            dx_m = (self.center_idx - r) * self.resolution
+            dy_m = (c - self.center_idx) * self.resolution
+            dist = math.sqrt(dx_m**2 + dy_m**2)
+            if dist < 0.1: continue
+            
+            if dist <= influence_distance_obstacles:
+                force_mag = K_repulsive * (cost / 100.0) * ((1.0 / dist) - (1.0 / influence_distance_obstacles)) * (1.0 / dist**2)
+                
+                ux = - (dx_m / dist)
+                uy = - (dy_m / dist)
+                
+                # Eğer engel önümüzde veya ön-solumuzda ise sağa kaçışı (sancak) tetikleyecek asimetrik itme uyguluyoruz.
+                # Ancak sağ taraf kapalı/engelli ise kıyı şeridi güvenliği için bunu devre dışı bırakıyoruz (Görev 2.3).
+                if not right_blocked and dx_m > 0.0 and dy_m <= 0.0:
+                    # ~22 derecelik rotasyon (cos(22) = 0.927, sin(22) = 0.374)
+                    cos_t = 0.927
+                    sin_t = 0.374
+                    ux_rot = ux * cos_t + uy * sin_t
+                    uy_rot = -ux * sin_t + uy * cos_t
+                    ux, uy = ux_rot, uy_rot
                     
-                    if dist <= influence_distance_obstacles:
-                        force_mag = K_repulsive * (cost / 100.0) * ((1.0 / dist) - (1.0 / influence_distance_obstacles)) * (1.0 / dist**2)
-                        
-                        ux = - (dx_m / dist)
-                        uy = - (dy_m / dist)
-                        
-                        # Eğer engel önümüzde veya ön-solumuzda ise sağa kaçışı (sancak) tetikleyecek asimetrik itme uyguluyoruz.
-                        # Ancak sağ taraf kapalı/engelli ise kıyı şeridi güvenliği için bunu devre dışı bırakıyoruz (Görev 2.3).
-                        if not right_blocked and dx_m > 0.0 and dy_m <= 0.0:
-                            # ~22 derecelik rotasyon (cos(22) = 0.927, sin(22) = 0.374)
-                            cos_t = 0.927
-                            sin_t = 0.374
-                            ux_rot = ux * cos_t + uy * sin_t
-                            uy_rot = -ux * sin_t + uy * cos_t
-                            ux, uy = ux_rot, uy_rot
-                            
-                        rep_x += ux * force_mag
-                        rep_y += uy * force_mag
+                rep_x += ux * force_mag
+                rep_y += uy * force_mag
                         
         return rep_x, rep_y
 

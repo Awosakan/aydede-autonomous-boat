@@ -30,6 +30,14 @@ void control_init(void);
 // PID Katsayılarını Güncelle
 void control_set_pid_gains(float kp, float ki, float kd);
 
+// Motor Asimetri Kalibrasyonu ve Ölü Bölge (Deadband) Tanımları
+#define MOTOR_DEADBAND 0.05f
+
+extern float left_motor_scaling;
+extern float right_motor_scaling;
+
+void control_set_motor_scaling(float left_scale, float right_scale);
+
 // Yönelim Sabitleme ve Diferansiyel İtki Hesaplama Döngüsü
 // current_yaw: Anlık pusula açısı (0-360 derece)
 // target_yaw: Telefondan gelen hedef rota açısı (0-360 derece)

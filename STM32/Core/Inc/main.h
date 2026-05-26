@@ -20,6 +20,9 @@ extern "C" {
 #define MOTOR_RIGHT_PIN          GPIO_PIN_7
 #define MOTOR_RIGHT_PORT         GPIOA
 
+// UART DMA Tampon Boyutu (main.c ve stm32f4xx_it.c arasında paylaşılır)
+#define USART1_RX_BUF_SIZE 256
+
 // Hata İşleme
 void Error_Handler(void);
 

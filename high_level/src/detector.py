@@ -221,6 +221,14 @@ class BuoyDetector:
         if frame is None:
             return []
             
+        # Dinamik çözünürlük uyarlaması (Hata: 159 çözümü)
+        h, w = frame.shape[:2]
+        if w != self.image_width or h != self.image_height:
+            self.image_width = w
+            self.image_height = h
+            self.focal_length_px = (self.image_width / 2.0) / math.tan(self.hfov_rad / 2.0)
+            logger.info(f"Kamera çözünürlüğü dinamik olarak güncellendi: {w}x{h}, Odak Uzaklığı: {self.focal_length_px:.1f} px")
+            
         self.frame_count += 1
         
         # [Senaryo 5 Önlemi] Lens tıkanıklık kontrolü
@@ -298,7 +306,7 @@ class BuoyDetector:
         detections = []
         
         color_ranges = {
-            "orange_gate": [((0, 120, 100), (15, 255, 255)), ((165, 120, 100), (180, 255, 255))],
+            "orange_gate": [((5, 120, 100), (15, 255, 255)), ((165, 120, 100), (175, 255, 255))],
             "yellow_obstacle": [((20, 100, 100), (35, 255, 255))],
             "target_red": [((0, 150, 80), (10, 255, 255)), ((170, 150, 80), (180, 255, 255))],
             "target_green": [((40, 80, 80), (80, 255, 255))],
@@ -326,10 +334,10 @@ class BuoyDetector:
                 if aspect_ratio < 0.2 or aspect_ratio > 1.8:
                     continue
                 
-                # Görev 1.3: Dalga köpüğü gürültü filtresi (Solidity / Doluluk oranı kontrolü)
+                # Görev 1.3: Dalga köpüğü gürültü filtresi (Extent / Doluluk oranı kontrolü)
                 # Yuvarlak duba konturları yüksek doluluğa sahiptir (>0.45). Düzensiz köpükler ise elenir.
-                solidity = area / float(w * h)
-                if solidity < 0.45:
+                extent = area / float(w * h)
+                if extent < 0.45:
                     continue
                     
                 box = [x, y, w, h]

@@ -19,7 +19,7 @@ TaskHandle_t NavigationTaskHandle;
 TaskHandle_t SafetyTaskHandle;
 
 // Haberleşme Değişkenleri
-#define USART1_RX_BUF_SIZE 256
+// USART1_RX_BUF_SIZE artık main.h'de tanımlı (C1 düzeltmesi)
 uint8_t usart1_rx_buf[USART1_RX_BUF_SIZE];
 uint16_t usart1_rx_read_ptr = 0;
 ProtocolParser_t serial_parser;
@@ -36,6 +36,7 @@ uint8_t gps_rx_byte = 0;
 // Motor Çıkış Değişkenleri (Safety Task tarafından denetlenmesi için global yapılmıştır)
 volatile float global_left_thrust = 0.0f;
 volatile float global_right_thrust = 0.0f;
+volatile float global_battery_voltage = 12.0f; // Batarya voltajı (TelemetryTask tarafından güncellenir)
 
 // Fonksiyon Bildirimleri
 void SystemClock_Config(void);
@@ -85,6 +86,12 @@ int main(void) {
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 1500);
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 1500);
+
+    // UART Kesme Önceliklerini FreeRTOS Güvenli Seviyeye Ayarla (A8 düzeltmesi)
+    HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(USART1_IRQn);
+    HAL_NVIC_SetPriority(USART2_IRQn, 6, 0);
+    HAL_NVIC_EnableIRQ(USART2_IRQn);
 
     // Telefon Haberleşmesi için DMA RX Circular modunu başlat
     HAL_UART_Receive_DMA(&huart1, usart1_rx_buf, USART1_RX_BUF_SIZE);
@@ -164,9 +171,12 @@ void StartTelemetryTask(void *argument) {
         // B. GPS Zaman Aşımı Kontrolü
         sensors_gps_update_tick(HAL_GetTick());
 
-        // C. Sensör Verilerini Kritik Bölge Korumasıyla Oku (Görev 3.3)
-        taskENTER_CRITICAL();
+        // C. Batarya Okumasını Kritik Bölge DIŞINDA Yap (ADC polling 10ms'e kadar bloklar)
         float bat = sensors_battery_read(&hadc1);
+        global_battery_voltage = bat; // SafetyTask için paylaşılan değişken (A3 düzeltmesi)
+        
+        // Diğer Sensör Verilerini Kritik Bölge Korumasıyla Oku (Görev 3.3)
+        taskENTER_CRITICAL();
         GPS_Data_t gps = sensors_get_gps();
         IMU_Data_t imu = sensors_get_imu();
         uint8_t current_mode = safety_get_mode();
@@ -251,19 +261,44 @@ void StartNavigationTask(void *argument) {
         global_right_thrust = motors.right_thrust;
 
         // D. PWM Dürtü Genişliği Hesaplama ve Uygulama (ESC Sinyali: 1000us - 2000us)
-        int16_t left_pulse = 1500 + (int16_t)(global_left_thrust * 500.0f);
-        int16_t right_pulse = 1500 + (int16_t)(global_right_thrust * 500.0f);
+        // Kavitasyon ve mekanik yıpranmayı önlemek için Slew Rate Limiter (ivme rampası) uygulanır.
+        // Ancak emniyet durumu (safety_is_ok() == 0) kritik ise motorlar anında kesilmelidir (bypass).
+        static float current_left_pulse = 1500.0f;
+        static float current_right_pulse = 1500.0f;
         
-        // Sınır koruması
-        if (left_pulse > 2000)  left_pulse = 2000;
-        if (left_pulse < 1000)  left_pulse = 1000;
-        if (right_pulse > 2000) right_pulse = 2000;
-        if (right_pulse < 1000) right_pulse = 1000;
+        int16_t left_pulse = 1500;
+        int16_t right_pulse = 1500;
         
-        // Eğer Emniyet katmanı motorların kapatılmasını emrediyorsa anında kes
         if (!safety_is_ok()) {
             left_pulse = 1500;
             right_pulse = 1500;
+            current_left_pulse = 1500.0f;
+            current_right_pulse = 1500.0f;
+        } else {
+            float target_left = 1500.0f + (global_left_thrust * 500.0f);
+            float target_right = 1500.0f + (global_right_thrust * 500.0f);
+            
+            // Adım başına maks 25us değişim (~1.25 saniyede tam gazdan durma)
+            #define MOTOR_SLEW_LIMIT_US 25.0f 
+            
+            float diff_l = target_left - current_left_pulse;
+            if (diff_l > MOTOR_SLEW_LIMIT_US) diff_l = MOTOR_SLEW_LIMIT_US;
+            else if (diff_l < -MOTOR_SLEW_LIMIT_US) diff_l = -MOTOR_SLEW_LIMIT_US;
+            current_left_pulse += diff_l;
+            
+            float diff_r = target_right - current_right_pulse;
+            if (diff_r > MOTOR_SLEW_LIMIT_US) diff_r = MOTOR_SLEW_LIMIT_US;
+            else if (diff_r < -MOTOR_SLEW_LIMIT_US) diff_r = -MOTOR_SLEW_LIMIT_US;
+            current_right_pulse += diff_r;
+            
+            left_pulse = (int16_t)current_left_pulse;
+            right_pulse = (int16_t)current_right_pulse;
+            
+            // Sınır koruması
+            if (left_pulse > 2000)  left_pulse = 2000;
+            if (left_pulse < 1000)  left_pulse = 1000;
+            if (right_pulse > 2000) right_pulse = 2000;
+            if (right_pulse < 1000) right_pulse = 1000;
         }
 
         __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, left_pulse);
@@ -279,7 +314,7 @@ void StartSafetyTask(void *argument) {
     const TickType_t xFrequency = pdMS_TO_TICKS(10); // 10ms = 100Hz
     
     for (;;) {
-        float raw_volts = sensors_battery_read(&hadc1);
+        float raw_volts = global_battery_voltage; // ADC çakışmasını önlemek için TelemetryTask'ın okumasını kullan (A3)
         float current_yaw = sensors_get_yaw();
         
         // Emniyet durumunu güncelle (10 ms adım süresi ile)

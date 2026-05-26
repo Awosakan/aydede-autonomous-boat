@@ -25,11 +25,11 @@ Core/Src/safety.c \
 Core/Src/stm32f4xx_it.c \
 Core/Src/system_stm32f4xx.c
 
-# Opsiyonel: Eğer yerelde HAL ve FreeRTOS kaynakları bu klasöre kopyalanırsa derleme zincirine eklenir.
-# C_SOURCES += $(wildcard Drivers/STM32F4xx_HAL_Driver/Src/*.c)
-# C_SOURCES += $(wildcard Middlewares/Third_Party/FreeRTOS/Source/*.c)
-# C_SOURCES += Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c
-# C_SOURCES += Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c
+# HAL ve FreeRTOS kaynakları (C8 düzeltmesi: yorumdan çıkarıldı)
+C_SOURCES += $(wildcard Drivers/STM32F4xx_HAL_Driver/Src/*.c)
+C_SOURCES += $(wildcard Middlewares/Third_Party/FreeRTOS/Source/*.c)
+C_SOURCES += Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c
+C_SOURCES += Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c
 
 # ASM Kaynakları (Startup dosyası)
 ASM_SOURCES =  \
@@ -95,6 +95,7 @@ LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) -Wl,-Map=$(BUILD_DIR)/$(TARGET)
 
 # printf float desteğini etkinleştir (Telemetri çıktısı için kritik)
 LDFLAGS += -u _printf_float
+LDFLAGS += -lm  # Matematik kütüphanesi (C9 düzeltmesi: fabsf, sqrtf, cos, sqrt)
 
 ################################################################################
 # Derleme Hedefleri (Build Rules)

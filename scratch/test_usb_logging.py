@@ -56,49 +56,66 @@ def run_test():
     )
     
     # 6 saniye boyunca çalışmasını bekleyelim
-    print("Sistem çalışıyor, logların yazılması için 6 saniye bekleniyor...")
-    time.sleep(6)
+    print("Sistem çalışıyor, logların yazılması için 10 saniye bekleniyor...")
+    time.sleep(10)
     
     # 4. Süreci sonlandıralım
     print("Sistem sonlandırılıyor...")
-    process.terminate()
     try:
-        process.wait(timeout=3)
+        stdout, stderr = process.communicate(timeout=3)
     except subprocess.TimeoutExpired:
-        print("Süreç terminate komutuna yanıt vermedi, kill ediliyor...")
         process.kill()
-        process.wait()
+        stdout, stderr = process.communicate()
         
-    # 5. Dosyaları doğrulayalım
-    expected_files = ["dosya1_kamera.mp4", "dosya2_telemetri.csv", "dosya3_costmap.jsonl"]
+    print("\n--- main.py STDOUT ---")
+    print(stdout.decode('utf-8', errors='ignore'))
+    print("--- main.py STDERR ---")
+    print(stderr.decode('utf-8', errors='ignore'))
+        
+    # 5. Dosyaları doğrulayalım (Zaman damgalı isimler olabileceği için ön ek kontrolü yapıyoruz)
+    expected_prefixes = {
+        "dosya1_kamera": ".mp4",
+        "dosya2_telemetri": ".csv",
+        "dosya3_costmap": ".jsonl"
+    }
     
     local_ok = True
     usb_ok = True
     
     print("\n--- Yerel Log Klasörü Kontrolü (./ida_logs) ---")
-    for fname in expected_files:
-        path = os.path.join(local_log_dir, fname)
-        if os.path.exists(path):
-            size = os.path.getsize(path)
-            print(f"[OK] {fname} mevcut, Boyut: {size} byte")
-            if size == 0:
-                print(f"[HATA] {fname} boyutu 0 byte!")
-                local_ok = False
+    for prefix, ext in expected_prefixes.items():
+        found = False
+        if os.path.exists(local_log_dir):
+            for file in os.listdir(local_log_dir):
+                if file.startswith(prefix) and file.endswith(ext):
+                    path = os.path.join(local_log_dir, file)
+                    size = os.path.getsize(path)
+                    print(f"[OK] {file} mevcut, Boyut: {size} byte")
+                    if size > 0:
+                        found = True
+                        break
+        if found:
+            print(f"[OK] {prefix}* yerel dosyası doğrulandı.")
         else:
-            print(f"[HATA] {fname} bulunamadı!")
+            print(f"[HATA] {prefix}* yerel dosyası bulunamadı veya boş!")
             local_ok = False
             
     print("\n--- Harici USB Log Klasörü Kontrolü (test_usb_dir) ---")
-    for fname in expected_files:
-        path = os.path.join(test_usb_dir, fname)
-        if os.path.exists(path):
-            size = os.path.getsize(path)
-            print(f"[OK] {fname} mevcut, Boyut: {size} byte")
-            if size == 0:
-                print(f"[HATA] {fname} boyutu 0 byte!")
-                usb_ok = False
+    for prefix, ext in expected_prefixes.items():
+        found = False
+        if os.path.exists(test_usb_dir):
+            for file in os.listdir(test_usb_dir):
+                if file.startswith(prefix) and file.endswith(ext):
+                    path = os.path.join(test_usb_dir, file)
+                    size = os.path.getsize(path)
+                    print(f"[OK] {file} mevcut, Boyut: {size} byte")
+                    if size > 0:
+                        found = True
+                        break
+        if found:
+            print(f"[OK] {prefix}* USB dosyası doğrulandı.")
         else:
-            print(f"[HATA] {fname} bulunamadı!")
+            print(f"[HATA] {prefix}* USB dosyası bulunamadı veya boş!")
             usb_ok = False
             
     # 6. config.json dosyasını eski haline getirelim

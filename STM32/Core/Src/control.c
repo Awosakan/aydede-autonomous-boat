@@ -3,6 +3,10 @@
 
 static PID_t yaw_pid;
 
+// Motor Asimetri Kalibrasyon Katsayıları (Varsayılan: 1.0f)
+float left_motor_scaling = 1.0f;
+float right_motor_scaling = 1.0f;
+
 void control_init(void) {
     // Varsayılan PID katsayıları (Saha testlerinde optimize edilebilir)
     yaw_pid.kp = 0.8f;
@@ -12,6 +16,10 @@ void control_init(void) {
     yaw_pid.last_error = 0.0f;
     yaw_pid.max_integrator = 0.3f; // Integrator doyumu (Anti-windup)
     yaw_pid.last_yaw = -999.0f;
+    
+    // Kalibrasyon değerlerini sıfırla/başlat
+    left_motor_scaling = 1.0f;
+    right_motor_scaling = 1.0f;
 }
 
 void control_set_pid_gains(float kp, float ki, float kd) {
@@ -20,6 +28,19 @@ void control_set_pid_gains(float kp, float ki, float kd) {
     yaw_pid.kd = kd;
     yaw_pid.integrator = 0.0f;
     yaw_pid.last_yaw = -999.0f;
+}
+
+void control_set_motor_scaling(float left_scale, float right_scale) {
+    left_motor_scaling = left_scale;
+    right_motor_scaling = right_scale;
+}
+
+static float linearize_thrust(float thrust) {
+    if (thrust == 0.0f) return 0.0f;
+    float sign = (thrust > 0.0f) ? 1.0f : -1.0f;
+    float abs_thrust = fabsf(thrust);
+    // Fırçasız motor itki eğrisi doğrusallaştırma
+    return sign * (0.6f * abs_thrust + 0.4f * abs_thrust * abs_thrust);
 }
 
 MotorOutput_t control_update(float current_yaw, float target_yaw, float target_speed, float dt) {
@@ -87,6 +108,34 @@ MotorOutput_t control_update(float current_yaw, float target_yaw, float target_s
     
     output.left_thrust = adjusted_speed + steer_cmd;
     output.right_thrust = adjusted_speed - steer_cmd;
+
+    // 7. Ölü Bölge (Deadband) Telafisi
+    if (output.left_thrust > 0.0f) {
+        output.left_thrust = MOTOR_DEADBAND + output.left_thrust * (1.0f - MOTOR_DEADBAND);
+    } else if (output.left_thrust < 0.0f) {
+        output.left_thrust = -MOTOR_DEADBAND + output.left_thrust * (1.0f - MOTOR_DEADBAND);
+    }
+    
+    if (output.right_thrust > 0.0f) {
+        output.right_thrust = MOTOR_DEADBAND + output.right_thrust * (1.0f - MOTOR_DEADBAND);
+    } else if (output.right_thrust < 0.0f) {
+        output.right_thrust = -MOTOR_DEADBAND + output.right_thrust * (1.0f - MOTOR_DEADBAND);
+    }
+
+    // 8. İtki Eğrisi Doğrusallaştırma (Non-Linear Thrust Mapping)
+    output.left_thrust = linearize_thrust(output.left_thrust);
+    output.right_thrust = linearize_thrust(output.right_thrust);
+
+    // 9. Motor Asimetri Kalibrasyonu Eşlemesi
+    output.left_thrust *= left_motor_scaling;
+    output.right_thrust *= right_motor_scaling;
+
+    // Sınırlandırma (Clamping) -> Motor çıkışlarının [-1.0, 1.0] aralığında olmasını garantiler
+    if (output.left_thrust > 1.0f)  output.left_thrust = 1.0f;
+    if (output.left_thrust < -1.0f) output.left_thrust = -1.0f;
+    
+    if (output.right_thrust > 1.0f)  output.right_thrust = 1.0f;
+    if (output.right_thrust < -1.0f) output.right_thrust = -1.0f;
 
     // Emniyet Koruması: Eğer hedef ileri hız sıfır ise ve yön değişimi gereksiz küçükse motorları kapat
     if (fabsf(target_speed) < 0.05f && fabsf(error) < 5.0f) {

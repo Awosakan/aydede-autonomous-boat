@@ -78,10 +78,7 @@ class APFPlanner:
                 boat_dx, boat_dy = gps_to_meters(prev_wp_gps[0], prev_wp_gps[1], current_lat, current_lon)
                 along_track = boat_dx * u_x + boat_dy * u_y
                 
-                # Kapı çizgisini / dikey düzlemi geçtik mi?
-                # Kapı çizgisini / dikey düzlemi geçtik mi?
-                # Kapı çizgisini / dikey düzlemi geçtik mi?
-                # Yanal sapmalarda sonsuz döngü tuzağını ve erken geçişleri dengelemek için 3.0m limiti kullanılır.
+                # Kapı çizgisini / dikey düzlemi geçtik mi? Yanal sapmalarda sonsuz döngüyü önlemek için along-track kontrolü.
                 if along_track >= line_len:
                     logger.info(f"Waypoint {current_wp_idx} geçiş düzlemi (along-track={along_track:.2f}m >= limit={line_len:.2f}m) üzerinden başarıyla ulaşıldı!")
                     reached = True
@@ -95,7 +92,7 @@ class APFPlanner:
             current_wp_idx += 1
             self.cte_integrator = 0.0 # Yeni hedef noktada sürüklenme entegralini sıfırla
             self.last_target_heading = None
-            return 0.0, current_yaw_deg, current_wp_idx, (current_wp_idx >= len(waypoints))
+            return self.min_speed_ms, current_yaw_deg, current_wp_idx, (current_wp_idx >= len(waypoints))
 
         # 2. [Senaryo 4 Önlemi]: Enine Sapma (Cross-Track Error) Hesaplama ve Entegral Düzeltmesi
         # İki nokta arasındaki ideal rota çizgisine olan dikey sapmayı hesaplar.
@@ -122,11 +119,10 @@ class APFPlanner:
                 # Enine sapma yönünde entegral düzeltme biriktir (dinamik dt kullanılır)
                 self.cte_integrator += cte * dt
                 # Anti-windup koruması (Limit 1.5m)
-                self.cte_integrator = max(-1.5, min(self.cte_integrator, 1.5))
+                self.cte_integrator = max(-self.max_cte_i, min(self.cte_integrator, self.max_cte_i))
                 
                 # İntegral düzeltme ile akıntı sürüklenmesini kararlı şekilde düzelt
-                K_cte_i = 0.05
-                cte_correction = self.cte_integrator * K_cte_i
+                cte_correction = self.cte_integrator * self.K_cte_i
                 
                 # Düzeltme yönü ideal rotaya çekmek için hattın dik birim vektörüdür (Sürüklenmenin tersi)
                 cte_offset_x = (u_y) * cte_correction
@@ -213,8 +209,9 @@ class APFPlanner:
         # Geri Vites (Reverse Thrust) Planlama Desteği - Görev 2.4
         # Eğer önümüzde engel varsa ve bizi geriye itiyorsa (rep_x < -0.5) geri git
         if rep_x < -0.5:
-            target_speed = max(-self.nominal_speed_ms, rep_x)
-            target_speed = max(-self.nominal_speed_ms, min(target_speed, self.max_speed_ms))
+            # Geri Vites: APF kuvvetini hız birimine dönüştür (kuvvet → m/s)
+            reverse_speed = max(-self.nominal_speed_ms, -self.nominal_speed_ms * min(1.0, abs(rep_x) / 3.0))
+            target_speed = max(-self.nominal_speed_ms, min(reverse_speed, self.max_speed_ms))
         else:
             if angle_factor < 0:
                 target_speed = self.min_speed_ms 

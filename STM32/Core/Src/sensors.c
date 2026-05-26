@@ -1,21 +1,33 @@
 #include "sensors.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 
 #ifndef M_PI
-#define M_PI 3.14159265358979323846f
+#define M_PI 3.14159265358979323846
 #endif
 
 // Sensör Durumları
-static GPS_Data_t gps_data;
-static IMU_Data_t imu_data;
+static volatile GPS_Data_t gps_data;
+static volatile IMU_Data_t imu_data;
 static float battery_voltage = 12.0f;
 
 // GPS NMEA Parser Tamponu
 static char nmea_buf[128];
 static uint8_t nmea_idx = 0;
+static volatile char nmea_process_buf[128];
+static volatile uint8_t nmea_sentence_ready = 0;
+
+static void sensors_delay(uint32_t ms) {
+    if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+        vTaskDelay(pdMS_TO_TICKS(ms));
+    } else {
+        HAL_Delay(ms);
+    }
+}
 
 // Complementary Filtre Katsayıları
 #define COMP_FILTER_ALPHA 0.98f   // Roll/Pitch için jiroskop ağırlığı
@@ -39,14 +51,14 @@ uint8_t sensors_imu_init(I2C_HandleTypeDef *hi2c) {
     if (HAL_I2C_Mem_Write(hi2c, MPU_ADDR, MPU_PWR_MGMT_1, I2C_MEMADD_SIZE_8BIT, &temp, 1, 100) != HAL_OK) {
         return 0; // I2C Hatası
     }
-    HAL_Delay(100);
+    sensors_delay(100);
     
     // Uyku modundan çıkarma, Dahili 8MHz osilatör seçimi
     temp = 0x00;
     if (HAL_I2C_Mem_Write(hi2c, MPU_ADDR, MPU_PWR_MGMT_1, I2C_MEMADD_SIZE_8BIT, &temp, 1, 100) != HAL_OK) {
         return 0;
     }
-    HAL_Delay(100);
+    sensors_delay(100);
     
     // Gyro Config: +-250 dps (0x00)
     temp = 0x00;
@@ -92,18 +104,18 @@ void I2C_RecoverBus(I2C_HandleTypeDef *hi2c) {
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
     
     // Kısa bir bekleme
-    HAL_Delay(1); 
+    sensors_delay(1); 
     
     // 3. SDA hattı LOW (kilitli) ise SCL hattına 9 clock darbesi gönder
     if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_RESET) {
         for (int i = 0; i < 9; i++) {
             // SCL LOW
             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
-            HAL_Delay(1); 
+            sensors_delay(1); 
             
             // SCL HIGH
             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
-            HAL_Delay(1); 
+            sensors_delay(1); 
             
             // Eğer SDA HIGH olduysa köle hattı serbest bırakmıştır
             if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_SET) {
@@ -114,11 +126,11 @@ void I2C_RecoverBus(I2C_HandleTypeDef *hi2c) {
     
     // 4. Manuel STOP Koşulu Üret
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET); // SDA LOW
-    HAL_Delay(1);
+    sensors_delay(1);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);   // SCL HIGH
-    HAL_Delay(1);
+    sensors_delay(1);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);   // SDA HIGH (STOP)
-    HAL_Delay(1);
+    sensors_delay(1);
     
     // 5. Pinleri I2C AF4 (Alternatif Fonksiyon) moduna geri getir
     GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
@@ -130,9 +142,9 @@ void I2C_RecoverBus(I2C_HandleTypeDef *hi2c) {
     
     // 6. I2C donanımını sıfırla ve yeniden ilklendir
     __HAL_RCC_I2C1_FORCE_RESET();
-    HAL_Delay(1);
+    sensors_delay(1);
     __HAL_RCC_I2C1_RELEASE_RESET();
-    HAL_Delay(1);
+    sensors_delay(1);
     
     HAL_I2C_Init(hi2c);
 }
@@ -260,8 +272,7 @@ static uint8_t verify_nmea_checksum(const char *sentence) {
     
     int i = 1;
     uint8_t xor_sum = 0;
-    while (sentence[i] != '\0' && sentence[sentence[i] != '*']) {
-        if (sentence[i] == '*') break;
+    while (sentence[i] != '\0' && sentence[i] != '*') {
         xor_sum ^= (uint8_t)sentence[i];
         i++;
     }
@@ -327,7 +338,7 @@ static void parse_nmea_sentence(const char *sentence) {
                 // İki konum arasındaki mesafeyi metre cinsinden hesapla (Flat Earth)
                 double dx = (parsed_lon - gps_data.longitude) * 111320.0 * cos(gps_data.latitude * M_PI / 180.0);
                 double dy = (parsed_lat - gps_data.latitude) * 110574.0;
-                float distance = sqrtf(dx*dx + dy*dy);
+                float distance = (float)sqrt(dx*dx + dy*dy);
                 float calculated_speed = distance / dt;
                 
                 // Eğer son veri alımından bu yana 5 saniyeden fazla zaman geçtiyse GPS kesilmiş olabilir,
@@ -355,7 +366,10 @@ void sensors_gps_feed(uint8_t data) {
     if (data == '\n' || data == '\r') {
         if (nmea_idx > 5) {
             nmea_buf[nmea_idx] = '\0';
-            parse_nmea_sentence(nmea_buf);
+            if (!nmea_sentence_ready) {
+                strcpy((char *)nmea_process_buf, nmea_buf);
+                nmea_sentence_ready = 1;
+            }
         }
         nmea_idx = 0;
     } else {
@@ -368,6 +382,21 @@ void sensors_gps_feed(uint8_t data) {
 }
 
 void sensors_gps_update_tick(uint32_t current_time_ms) {
+    char local_nmea[128];
+    uint8_t process_now = 0;
+    
+    taskENTER_CRITICAL();
+    if (nmea_sentence_ready) {
+        strcpy(local_nmea, (char *)nmea_process_buf);
+        nmea_sentence_ready = 0;
+        process_now = 1;
+    }
+    taskEXIT_CRITICAL();
+    
+    if (process_now) {
+        parse_nmea_sentence(local_nmea);
+    }
+
     // Eğer son GPS verisinden bu yana 2.0 saniyeden fazla geçmişse kilit durumunu otomatik kayıp olarak ata
     if (gps_data.gps_lock && (current_time_ms - gps_data.last_update_time > 2000)) {
         gps_data.gps_lock = 0;
@@ -388,7 +417,17 @@ float sensors_battery_read(ADC_HandleTypeDef *hadc) {
 }
 
 GPS_Data_t sensors_get_gps(void) {
-    return gps_data;
+    taskENTER_CRITICAL();
+    GPS_Data_t copy;
+    copy.latitude = gps_data.latitude;
+    copy.longitude = gps_data.longitude;
+    copy.sog = gps_data.sog;
+    copy.cog = gps_data.cog;
+    copy.gps_lock = gps_data.gps_lock;
+    copy.last_update_time = gps_data.last_update_time;
+    copy.has_first_fix = gps_data.has_first_fix;
+    taskEXIT_CRITICAL();
+    return copy;
 }
 
 IMU_Data_t sensors_get_imu(void) {

@@ -2,7 +2,7 @@
 #include "protocol.h"
 #include <math.h>
 
-static SafetyStatus_t safety_state;
+static volatile SafetyStatus_t safety_state;
 
 // EMA filtresi katsayısı (0.05f yavaş/pürüzsüz tepki sağlar, ani dalgalanmaları önler)
 #define EMA_ALPHA 0.05f
@@ -50,13 +50,13 @@ void safety_update(float raw_voltage, float current_yaw, float left_cmd, float r
     // 5. Yosun/Motor Stall Koruması
     // Eğer otonom veya manuel modda isek ve dümen komutu motorları döndürmek için fark yaratıyorsa:
     if ((safety_state.system_mode == MODE_AUTO || safety_state.system_mode == MODE_MANUAL) &&
-        (fabs(left_cmd - right_cmd) > STALL_MIN_STEER_DIFF)) {
+        (fabsf(left_cmd - right_cmd) > STALL_MIN_STEER_DIFF)) {
         
         // Mevcut yaw açısı ile son stall kontrol açısı arasındaki fark
         float yaw_diff = current_yaw - safety_state.last_yaw_for_stall;
         while (yaw_diff > 180.0f)  yaw_diff -= 360.0f;
         while (yaw_diff < -180.0f) yaw_diff += 360.0f;
-        yaw_diff = fabs(yaw_diff);
+        yaw_diff = fabsf(yaw_diff);
 
         if (yaw_diff >= STALL_MAX_YAW_CHANGE) {
             // İDA döndüğü için stall durumunda değil, timer'ı sıfırla ve referans açıyı güncelle
@@ -85,6 +85,7 @@ uint8_t safety_is_ok(void) {
 }
 
 void safety_trigger_emergency(void) {
+    // ISR bağlamından çağrılabilir (EXTI callback) — atomik yazma yeterli (uint8_t)
     safety_state.emergency_triggered = 1;
     safety_state.system_mode = MODE_EMERGENCY;
 }

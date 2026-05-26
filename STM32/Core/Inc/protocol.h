@@ -173,20 +173,32 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b, 
         case STATE_WAIT_CRC_MSB:
             parser->received_crc |= ((uint16_t)b << 8);
             
-            // Calculate expected CRC: header (4 bytes) + payload
-            uint8_t crc_temp[300];
-            memcpy(crc_temp, parser->header_buf, 4);
-            if (parser->payload_len > 0) {
-                memcpy(crc_temp + 4, parser->payload, parser->payload_len);
-            }
-            
-            uint16_t expected_crc = calculate_crc16(crc_temp, 4 + parser->payload_len);
-            
-            // Reset parser state for next packet
-            parser->state = STATE_WAIT_SYNC1;
-            
-            if (parser->received_crc == expected_crc) {
-                return 1; // Valid packet parsed
+            // CRC'yi geçici tampon OLMADAN parçalı hesapla (A7: stack taşma önlemi)
+            {
+                uint16_t crc = 0xFFFF;
+                // Önce header (4 bayt) üzerinden CRC hesapla
+                for (uint8_t ci = 0; ci < 4; ci++) {
+                    crc ^= (uint16_t)parser->header_buf[ci];
+                    for (uint8_t bi = 0; bi < 8; bi++) {
+                        if (crc & 0x0001) crc = (crc >> 1) ^ 0xA001;
+                        else crc >>= 1;
+                    }
+                }
+                // Ardından payload üzerinden CRC devam et
+                for (uint8_t ci = 0; ci < parser->payload_len; ci++) {
+                    crc ^= (uint16_t)parser->payload[ci];
+                    for (uint8_t bi = 0; bi < 8; bi++) {
+                        if (crc & 0x0001) crc = (crc >> 1) ^ 0xA001;
+                        else crc >>= 1;
+                    }
+                }
+                
+                // Reset parser state for next packet
+                parser->state = STATE_WAIT_SYNC1;
+                
+                if (parser->received_crc == crc) {
+                    return 1; // Valid packet parsed
+                }
             }
             break;
     }

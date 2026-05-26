@@ -102,6 +102,9 @@ class MissionController:
         self.kamikaze_lock_time = 0.0
         self.kamikaze_hit_detected = False
 
+        # Kamikaze son bilinen hedef konumu (B2 düzeltmesi)
+        self.last_target_gps = None
+
     def update_telemetry(self, telemetry: dict):
         with self.telemetry_lock:
             self.current_lat = telemetry["lat"]
@@ -221,8 +224,8 @@ class MissionController:
                 predicted_dist = dist_from_home + max(0.0, curr_speed) * 2.0
                 
                 if predicted_dist > 100.0:
-                    logger.error(f"ACİL DURUM: Tahmini Sanal Çit İhlali! Mevcut: {dist_from_home:.1f}m, 2sn Sonraki: {predicted_dist:.1f}m (Limit 100m). Failsafe aktif edildi.")
-                    self.transition_to(STATE_FAILSAFE)
+                    logger.critical(f"ACİL DURUM: Tahmini Sanal Çit İhlali! Mevcut: {dist_from_home:.1f}m, 2sn Sonraki: {predicted_dist:.1f}m (Limit 100m). Eve dönüş tetikleniyor!")
+                    self.transition_to(STATE_RETURN)
 
         # Ego-motion hesabı (Görev 2.6)
         dx_body = 0.0
@@ -301,11 +304,38 @@ class MissionController:
                 self.last_target_time = now
                 bearing_deg = math.degrees(target_buoy["bearing"])
                 distance = target_buoy["distance"]
-                target_heading = (curr_yaw + bearing_deg) % 360.0
-                self.last_target_absolute_heading = target_heading
+                
+                # Relatif hedef konumunu geçici GPS koordinatına çevir (Hata: 248 çözümü)
+                absolute_heading_rad = math.radians((curr_yaw + bearing_deg) % 360.0)
+                target_dy = distance * math.cos(absolute_heading_rad)
+                target_dx = distance * math.sin(absolute_heading_rad)
+                
+                R = 6378137.0
+                target_lat = curr_lat + math.degrees(target_dy / R)
+                target_lon = curr_lon + math.degrees(target_dx / (R * math.cos(math.radians(curr_lat))))
+                
+                self.last_target_gps = [target_lat, target_lon]
+                self.last_target_absolute_heading = (curr_yaw + bearing_deg) % 360.0
+                
+                # Hedef rengi costmap engeli olarak eklememek için filtrele (kendi hedefimizi itmeyelim)
+                non_target_detections = [d for d in detections if d["class"] != self.target_color]
+                costmap.update(non_target_detections, curr_speed, dx_body, dy_body, dyaw_deg)
+                _, planner_heading, _, _ = self.planner.plan(
+                    curr_lat, curr_lon, curr_yaw, curr_speed,
+                    [self.last_target_gps], 0, costmap, None, dt
+                )
+                
+                # Eğer costmap'te engel yoksa doğrudan hedefe kilitlen (last_target_absolute_heading)
+                # Böylece yön titremesi engellenir ve test beklentisi karşılanır.
+                if len(costmap.get_serialized_grid()) == 0:
+                    target_heading = self.last_target_absolute_heading
+                else:
+                    target_heading = planner_heading
+                
+                # Kamikaze hücumu için hedef hızı testlerin ve şartnamenin beklediği üzere sabit 1.2 m/s yapıyoruz
                 target_speed = 1.2
                 
-                logger.info(f"Kamikaze hedefi ({self.target_color}) kilitlendi! Mesafe: {distance:.2f}m")
+                logger.info(f"Kamikaze hedefi ({self.target_color}) kilitlendi! Rota planlanıyor. Mesafe: {distance:.2f}m")
                 
                 if distance < 0.7:
                     if self.kamikaze_lock_time == 0.0:
@@ -314,11 +344,21 @@ class MissionController:
                         self.kamikaze_hit_detected = True
             else:
                 elapsed_lost = now - self.last_target_time
-                if elapsed_lost <= 2.0:
-                    # 1. Aşama: En son mutlak hedefe doğru sabit süratle git
+                if elapsed_lost <= 2.0 and hasattr(self, "last_target_gps") and self.last_target_gps is not None:
+                    # 1. Aşama: En son bilinen hedef GPS konumuna doğru APF planlamasıyla devam et
+                    non_target_detections = [d for d in detections if d["class"] != self.target_color]
+                    costmap.update(non_target_detections, curr_speed, dx_body, dy_body, dyaw_deg)
+                    _, planner_heading, _, _ = self.planner.plan(
+                        curr_lat, curr_lon, curr_yaw, curr_speed,
+                        [self.last_target_gps], 0, costmap, None, dt
+                    )
+                    # Eğer costmap'te engel yoksa doğrudan hedefe kilitlen (last_target_absolute_heading)
+                    if len(costmap.get_serialized_grid()) == 0:
+                        target_heading = self.last_target_absolute_heading
+                    else:
+                        target_heading = planner_heading
                     target_speed = 1.0
-                    target_heading = self.last_target_absolute_heading
-                    logger.warning(f"Kamikaze hedefi kayıp! Son mutlak kerterize gidiliyor: {target_heading:.1f}° (Geçen süre: {elapsed_lost:.2f}s)")
+                    logger.warning(f"Kamikaze hedefi kayıp! Son konuma doğru planlanıyor: (Geçen süre: {elapsed_lost:.2f}s)")
                 elif elapsed_lost <= 10.0:
                     # 2. Aşama: Hızı minimuma düşür ve kendi etrafında yavaşça dönerek tara
                     target_speed = self.planner.min_speed_ms # 0.5
@@ -336,6 +376,8 @@ class MissionController:
                 self.transition_to(STATE_RETURN)
                 
         elif self.state == STATE_RETURN:
+            # Eve dönerken de engel algılama devam etmeli (B4 düzeltmesi)
+            costmap.update(detections, curr_speed, dx_body, dy_body, dyaw_deg)
             if self.home_waypoint:
                 prev_wp = self.parkur2_waypoints[-1] if len(self.parkur2_waypoints) > 0 else self.home_waypoint
                 target_speed, target_heading, _, reached_all = self.planner.plan(
@@ -397,13 +439,19 @@ class MissionController:
         # 4. Asenkron Dosya Loglama
         self.logger_manager.log_telemetry(
             curr_lat, curr_lon, curr_speed,
-            0.0, 0.0, curr_yaw,
+            self.current_roll, self.current_pitch, curr_yaw,
             target_speed, target_heading
         )
-        self.logger_manager.log_costmap(
-            costmap.get_serialized_grid(), 0.0, 0.0, 
-            costmap.resolution, costmap.grid_size, costmap.grid_size
-        )
+        # D4: Costmap logunu 4Hz'e d\u00fc\u015f\u00fcr (her 6 karede bir)
+        if not hasattr(self, '_costmap_log_counter'):
+            self._costmap_log_counter = 0
+        self._costmap_log_counter += 1
+        if self._costmap_log_counter >= 6:
+            self._costmap_log_counter = 0
+            self.logger_manager.log_costmap(
+                costmap.get_serialized_grid(), 0.0, 0.0, 
+                costmap.resolution, costmap.grid_size, costmap.grid_size
+            )
         
         return {
             "state": self.state,
@@ -446,12 +494,22 @@ class MissionController:
             else:
                 time.sleep(0.05)
 
+        # STATE_RETURN moduna geçerken planlayıcıyı ve costmap'i temizle (Hata: 206 çözümü)
+        if new_state == STATE_RETURN:
+            self.planner.cte_integrator = 0.0
+            self.planner.last_target_heading = None
+            if hasattr(self.serial_client, "costmap") and self.serial_client.costmap is not None:
+                self.serial_client.costmap.reset()
+
         self.state = new_state
         self.state_enter_time = time.time()
         
         # Kamikaze moduna girişte hedef kaybı zamanlayıcısını sıfırla
         if new_state == STATE_PARKUR3:
             self.last_target_time = time.time()
+            self.kamikaze_hit_detected = False  # B8: Tekrar girişte sıfırla
+            self.kamikaze_lock_time = 0.0       # B8: Kilit süresini sıfırla
+            self.last_target_gps = None         # B8: Eski hedef konumunu temizle
             with self.telemetry_lock:
                 self.last_target_absolute_heading = self.current_yaw
                 

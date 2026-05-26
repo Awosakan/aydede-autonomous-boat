@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.mp4
+*.csv
+*.jsonl
+*.log
+ida_logs/
+high_level/src/ida_logs/
+aydedev4withstm32/
+.gemini/
+.idea/
+.vscode/
+build/
+bin/

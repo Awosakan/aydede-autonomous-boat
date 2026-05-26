@@ -82,7 +82,7 @@ void USART1_IRQHandler(void) {
         extern ProtocolParser_t serial_parser;
         protocol_parser_init(&serial_parser);
         
-        HAL_UART_Receive_DMA(&huart1, usart1_rx_buf, 256);
+        HAL_UART_Receive_DMA(&huart1, usart1_rx_buf, USART1_RX_BUF_SIZE);
         huart1.ErrorCode = HAL_UART_ERROR_NONE;
         return; // Hata temizlendi, HAL Handler'a girmeye gerek yok
     }
@@ -120,7 +120,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
         extern ProtocolParser_t serial_parser;
         protocol_parser_init(&serial_parser);
         
-        HAL_UART_Receive_DMA(huart, usart1_rx_buf, 256);
+        HAL_UART_Receive_DMA(huart, usart1_rx_buf, USART1_RX_BUF_SIZE);
         huart->ErrorCode = HAL_UART_ERROR_NONE;
     }
     else if (huart->Instance == USART2) {

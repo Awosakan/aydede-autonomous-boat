@@ -35,6 +35,42 @@ class MockSerial:
     def close(self):
         pass
 
+class VideoGrabber(threading.Thread):
+    """
+    Kamera okuma işleminin (cap.read) işletim sistemi seviyesinde kilitlenerek
+    ana otonomi döngüsünü dondurmasını engellemek için asenkron okuyucu thread (Hata: 255 çözümü).
+    """
+    def __init__(self, cap):
+        super().__init__(daemon=True)
+        self.cap = cap
+        self.ret = False
+        self.frame = None
+        self.running = False
+        self.lock = threading.Lock()
+        
+    def run(self):
+        self.running = True
+        while self.running:
+            if self.cap.isOpened():
+                try:
+                    ret, frame = self.cap.read()
+                    with self.lock:
+                        self.ret = ret
+                        if ret:
+                            self.frame = frame.copy()
+                except Exception as e:
+                    logger.error(f"Kamera okuma hatası: {e}")
+                    with self.lock:
+                        self.ret = False
+            time.sleep(0.01) # Maks 100 FPS
+            
+    def read(self):
+        with self.lock:
+            return self.ret, self.frame
+            
+    def stop(self):
+        self.running = False
+
 class IDANode:
     def __init__(self, serial_port: str = "/dev/ttyACM0", baudrate: int = 115200, 
                  model_path: str = None, video_source=0):
@@ -70,7 +106,7 @@ class IDANode:
             "target_color": "target_red",
             "state_timeout_seconds": 300.0,
             "max_speed_accel": 0.8,
-            "max_yaw_rate": 45.0,
+            "max_yaw_rate": 180.0,
             "usb_log_dir": None,
             "yolo_classes": {
                 "0": "orange_gate",
@@ -128,6 +164,7 @@ class IDANode:
         self.camera_frozen = False
         self.last_frame = None
         self.frozen_frames_counter = 0
+        self.grabber = None
         
         # 6. Yerel Engel Haritası (Costmap)
         self.costmap = LocalCostmap(
@@ -286,6 +323,14 @@ class IDANode:
         else:
             logger.error("Kamera açılamadı! Sistem yedek (simüle) görüntü moduna geçiyor.")
             
+        # Asenkron kamera grabber thread'ini başlat (Hata: 255 çözümü)
+        if cap.isOpened():
+            self.grabber = VideoGrabber(cap)
+            self.grabber.start()
+            logger.info("Asenkron Kamera Grabber thread başlatıldı.")
+        else:
+            self.grabber = None
+            
         logger.info("İDA otonomi düğümü başlatıldı. Görev tetiklenmesi bekleniyor...")
         
         # Otonomi Döngüsü (24 FPS Kontrol)
@@ -326,7 +371,7 @@ class IDANode:
                     auto_started = True
                 
                 # Görev 1.6: Kamera Bağlantı Durum Kontrolü
-                if not cap.isOpened():
+                if not cap.isOpened() or self.grabber is None:
                     if isinstance(self.ser, MockSerial):
                         # Simülasyonda yapay görüntü üret
                         ret, frame = True, self._create_test_frame()
@@ -336,10 +381,13 @@ class IDANode:
                         self.camera_lost = True
                         ret, frame = False, None
                 else:
-                    ret, frame = cap.read()
-                    if not ret and not isinstance(self.ser, MockSerial):
-                        logger.error("Failsafe: Kameradan kare okunamıyor (kablo çıkmış olabilir)!")
-                        self.camera_lost = True
+                    ret, frame = self.grabber.read()
+                    if not ret:
+                        if isinstance(self.ser, MockSerial):
+                            ret, frame = True, self._create_test_frame()
+                        else:
+                            logger.error("Failsafe: Kameradan kare okunamıyor (kablo çıkmış olabilir)!")
+                            self.camera_lost = True
                 
                 if ret and frame is not None:
                     # Görev 1.6: Görüntü Donması Kontrolü
@@ -405,8 +453,22 @@ class IDANode:
         logger.info("Sistem kapatılıyor, güvenli moda geçiliyor...")
         self.running = False
         
+        # Grabber thread'ini durdur
+        if hasattr(self, "grabber") and self.grabber is not None:
+            self.grabber.stop()
+            try:
+                self.grabber.join(timeout=1.0)
+            except Exception as e:
+                logger.error(f"Grabber thread join hatası: {e}")
+        
         # Logları kapat
         self.logger_manager.stop()
+        
+        # Seri okuma ve heartbeat threadlerini durdur (D6 düzeltmesi)
+        if hasattr(self, "read_thread") and self.read_thread.is_alive():
+            self.read_thread.join(timeout=1.0)
+        if hasattr(self, "hb_thread") and self.hb_thread.is_alive():
+            self.hb_thread.join(timeout=1.0)
         
         # Seri portu kapat
         if self.ser is not None:

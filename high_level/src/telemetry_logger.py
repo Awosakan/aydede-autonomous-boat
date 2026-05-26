@@ -20,10 +20,13 @@ class AsyncLoggerManager:
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         
+        # Benzersiz dosya adları için zaman damgası (Hata: 238 çözümü)
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+        
         # Dosya yolları
-        self.csv_path = os.path.join(output_dir, "dosya2_telemetri.csv")
-        self.costmap_path = os.path.join(output_dir, "dosya3_costmap.jsonl")
-        self.video_path = os.path.join(output_dir, "dosya1_kamera.mp4")
+        self.csv_path = os.path.join(output_dir, f"dosya2_telemetri_{timestamp_str}.csv")
+        self.costmap_path = os.path.join(output_dir, f"dosya3_costmap_{timestamp_str}.jsonl")
+        self.video_path = os.path.join(output_dir, f"dosya1_kamera_{timestamp_str}.mp4")
         
         # Yedek / USB Dosya yolları
         self.secondary_output_dir = secondary_output_dir
@@ -41,17 +44,17 @@ class AsyncLoggerManager:
                     f.write("test")
                 os.remove(test_file)
                 
-                self.sec_csv_path = os.path.join(secondary_output_dir, "dosya2_telemetri.csv")
-                self.sec_costmap_path = os.path.join(secondary_output_dir, "dosya3_costmap.jsonl")
-                self.sec_video_path = os.path.join(secondary_output_dir, "dosya1_kamera.mp4")
+                self.sec_csv_path = os.path.join(secondary_output_dir, f"dosya2_telemetri_{timestamp_str}.csv")
+                self.sec_costmap_path = os.path.join(secondary_output_dir, f"dosya3_costmap_{timestamp_str}.jsonl")
+                self.sec_video_path = os.path.join(secondary_output_dir, f"dosya1_kamera_{timestamp_str}.mp4")
                 logger.info(f"Harici USB loglama dizini aktif edildi: {secondary_output_dir}")
             except Exception as e:
                 logger.error(f"Harici USB loglama dizini ({secondary_output_dir}) hazırlanamadı: {e}. Sadece ana dizine loglanacak.")
                 self.secondary_output_dir = None
         
-        # Telemetri ve Costmap kuyrukları
-        self.telemetry_queue = queue.Queue()
-        self.costmap_queue = queue.Queue()
+        # Telemetri ve Costmap kuyrukları (OOM önleme ve sınırlı bellek tüketimi - Hata: 84 çözümü)
+        self.telemetry_queue = queue.Queue(maxsize=1000)
+        self.costmap_queue = queue.Queue(maxsize=500)
         
         # Çalışma bayrağı
         self.running = False
@@ -70,22 +73,38 @@ class AsyncLoggerManager:
         # Yazıcı threadleri
         self.writer_thread = None
         self.video_thread = None
+        
+        # Kalıcı dosya handle'ları (C4: her satırda aç/kapa yerine tek sefer aç)
+        self.csv_file = None
+        self.costmap_file = None
+        self.sec_csv_file = None
+        self.sec_costmap_file = None
 
     def start(self, frame_width=640, frame_height=480, fps=24.0):
         self.running = True
         
         # CSV dosyasını başlat ve başlıkları yaz
         if not os.path.exists(self.csv_path):
-            with open(self.csv_path, mode='w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(self.csv_headers)
+            self.csv_file = open(self.csv_path, mode='w', newline='')
+            writer = csv.writer(self.csv_file)
+            writer.writerow(self.csv_headers)
+        else:
+            self.csv_file = open(self.csv_path, mode='a', newline='')
+        
+        # Costmap dosyasını aç
+        self.costmap_file = open(self.costmap_path, mode='a')
                 
         # Yedek CSV dosyasını başlat ve başlıkları yaz
-        if self.sec_csv_path and not os.path.exists(self.sec_csv_path):
+        if self.sec_csv_path:
             try:
-                with open(self.sec_csv_path, mode='w', newline='') as f:
-                    writer = csv.writer(f)
+                if not os.path.exists(self.sec_csv_path):
+                    self.sec_csv_file = open(self.sec_csv_path, mode='w', newline='')
+                    writer = csv.writer(self.sec_csv_file)
                     writer.writerow(self.csv_headers)
+                else:
+                    self.sec_csv_file = open(self.sec_csv_path, mode='a', newline='')
+                if self.sec_costmap_path:
+                    self.sec_costmap_file = open(self.sec_costmap_path, mode='a')
             except Exception as e:
                 logger.error(f"Yedek CSV dosyası başlatılamadı: {e}")
                 self.sec_csv_path = None
@@ -118,7 +137,10 @@ class AsyncLoggerManager:
         """
         timestamp = time.time()
         data = [timestamp, lat, lon, speed, roll, pitch, heading, speed_sp, heading_sp]
-        self.telemetry_queue.put(data)
+        try:
+            self.telemetry_queue.put_nowait(data)
+        except queue.Full:
+            logger.warning("Telemetry log kuyruğu dolu, veri paketi düşürüldü!")
 
     def log_costmap(self, grid_data: list, origin_x: float, origin_y: float, 
                     resolution: float, width: int, height: int):
@@ -135,7 +157,10 @@ class AsyncLoggerManager:
             "height": height,
             "grid": grid_data  # 1D veya 2D engel matrisi/koordinat listesi
         }
-        self.costmap_queue.put(payload)
+        try:
+            self.costmap_queue.put_nowait(payload)
+        except queue.Full:
+            logger.warning("Costmap log kuyruğu dolu, harita karesi düşürüldü!")
 
     def log_frame(self, frame):
         """
@@ -159,16 +184,17 @@ class AsyncLoggerManager:
                 # Telemetri Yazımı
                 try:
                     data = self.telemetry_queue.get(timeout=0.1)
-                    # Ana CSV'ye yaz
-                    with open(self.csv_path, mode='a', newline='') as f:
-                        writer = csv.writer(f)
+                    # Ana CSV'ye yaz (C4: kalıcı handle)
+                    if self.csv_file:
+                        writer = csv.writer(self.csv_file)
                         writer.writerow(data)
+                        self.csv_file.flush()
                     # Yedek CSV'ye yaz
-                    if self.sec_csv_path:
+                    if self.sec_csv_file:
                         try:
-                            with open(self.sec_csv_path, mode='a', newline='') as f:
-                                writer = csv.writer(f)
-                                writer.writerow(data)
+                            writer = csv.writer(self.sec_csv_file)
+                            writer.writerow(data)
+                            self.sec_csv_file.flush()
                         except Exception as e:
                             logger.error(f"Yedek USB CSV yazma hatası: {e}")
                     self.telemetry_queue.task_done()
@@ -179,14 +205,15 @@ class AsyncLoggerManager:
                 try:
                     map_data = self.costmap_queue.get(timeout=0.1)
                     map_str = json.dumps(map_data) + "\n"
-                    # Ana Costmap'e yaz
-                    with open(self.costmap_path, mode='a') as f:
-                        f.write(map_str)
+                    # Ana Costmap'e yaz (C4: kalıcı handle)
+                    if self.costmap_file:
+                        self.costmap_file.write(map_str)
+                        self.costmap_file.flush()
                     # Yedek Costmap'e yaz
-                    if self.sec_costmap_path:
+                    if self.sec_costmap_file:
                         try:
-                            with open(self.sec_costmap_path, mode='a') as f:
-                                f.write(map_str)
+                            self.sec_costmap_file.write(map_str)
+                            self.sec_costmap_file.flush()
                         except Exception as e:
                             logger.error(f"Yedek USB Costmap yazma hatası: {e}")
                     self.costmap_queue.task_done()
@@ -256,9 +283,9 @@ class AsyncLoggerManager:
         
         # Threadlerin bitmesini bekle
         if self.writer_thread is not None:
-            self.writer_thread.join()
+            self.writer_thread.join(timeout=2.0)  # C5: Timeout ekle
         if self.video_thread is not None:
-            self.video_thread.join()
+            self.video_thread.join(timeout=2.0)  # C5: Timeout ekle
             
         # Video yazıcıyı kapat
         if self.video_writer is not None:
@@ -270,5 +297,13 @@ class AsyncLoggerManager:
             except Exception as e:
                 logger.error(f"Yedek USB Video kapatma hatası: {e}")
             self.sec_video_writer = None
+        
+        # Kalıcı dosya handle'larını kapat (C4)
+        for fh in [self.csv_file, self.costmap_file, self.sec_csv_file, self.sec_costmap_file]:
+            if fh:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
             
         logger.info("Loglama sistemi durduruldu ve dosyalar kapatıldı.")
