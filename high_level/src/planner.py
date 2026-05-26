@@ -47,6 +47,11 @@ class APFPlanner:
         self.last_target_heading = None
         self.heading_ema_alpha = 0.25 # Açısal yumuşatma katsayısı (0.25 = düşük geçiren filtre)
 
+        # --- GPS Gürültü Filtresi (Ucuz GPS sapmaları için dairesel tampon) ---
+        self.gps_history_lat = []
+        self.gps_history_lon = []
+        self.gps_filter_size = 5
+
     def plan(self, current_lat: float, current_lon: float, current_yaw_deg: float, current_speed: float,
              waypoints: list, current_wp_idx: int, costmap, prev_wp_gps: list = None, dt: float = 0.04) -> tuple:
         """
@@ -55,10 +60,20 @@ class APFPlanner:
         if not waypoints or current_wp_idx >= len(waypoints):
             return 0.0, current_yaw_deg, current_wp_idx, True
             
+        # Ucuz GPS gürültüsünü sönümlemek için konum verisini hareketli ortalamayla filtrele
+        self.gps_history_lat.append(current_lat)
+        self.gps_history_lon.append(current_lon)
+        if len(self.gps_history_lat) > self.gps_filter_size:
+            self.gps_history_lat.pop(0)
+            self.gps_history_lon.pop(0)
+            
+        filtered_lat = sum(self.gps_history_lat) / len(self.gps_history_lat)
+        filtered_lon = sum(self.gps_history_lon) / len(self.gps_history_lon)
+
         target_lat, target_lon = waypoints[current_wp_idx]
         
         # 1. Hedef noktaya olan mesafeyi ve bağıl konumu metre cinsinden hesapla
-        dx_m, dy_m = gps_to_meters(current_lat, current_lon, target_lat, target_lon)
+        dx_m, dy_m = gps_to_meters(filtered_lat, filtered_lon, target_lat, target_lon)
         dist_to_wp = math.sqrt(dx_m**2 + dy_m**2)
         
         # Noktaya ulaşıldı mı kontrolü
@@ -75,7 +90,7 @@ class APFPlanner:
             if line_len > 1.0:
                 u_x = line_dx / line_len
                 u_y = line_dy / line_len
-                boat_dx, boat_dy = gps_to_meters(prev_wp_gps[0], prev_wp_gps[1], current_lat, current_lon)
+                boat_dx, boat_dy = gps_to_meters(prev_wp_gps[0], prev_wp_gps[1], filtered_lat, filtered_lon)
                 along_track = boat_dx * u_x + boat_dy * u_y
                 
                 # Kapı çizgisini / dikey düzlemi geçtik mi? Yanal sapmalarda sonsuz döngüyü önlemek için along-track kontrolü.
@@ -110,7 +125,7 @@ class APFPlanner:
                 u_y = line_dy / line_len
                 
                 # Botun önceki WP'ye göre bağıl konumu (Metre)
-                boat_dx, boat_dy = gps_to_meters(prev_wp_gps[0], prev_wp_gps[1], current_lat, current_lon)
+                boat_dx, boat_dy = gps_to_meters(prev_wp_gps[0], prev_wp_gps[1], filtered_lat, filtered_lon)
                 
                 # Enine sapma mesafesi (Cross-Track Error) - Rota hattına dik olan mesafe
                 # Vektörel çarpım (2D cross product): boat_vector x line_unit_vector

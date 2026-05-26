@@ -204,7 +204,8 @@ void sensors_imu_update(I2C_HandleTypeDef *hi2c, float dt) {
     // yerine GPS COG referans alınarak yaw açısı hizalanır (Kötü Senaryo 2 koruması).
     // Ancak yan yan sürüklenmelerde (crab walk) ve sert dönüşlerde COG ile Heading farklılaşacağından,
     // yanal ivme (ay) ve dönüş hızı (yaw_rate) için eşik filtresi uyguluyoruz (Görev 4.3).
-    if (gps_data.gps_lock && gps_data.sog > 0.6f && fabsf(ay) < 0.12f && fabsf(imu_data.yaw_rate) < 15.0f) {
+    // Ucuz GPS gürültüsünü engellemek için hız eşiği 1.2 m/s'ye yükseltildi.
+    if (gps_data.gps_lock && gps_data.sog > 1.2f && fabsf(ay) < 0.12f && fabsf(imu_data.yaw_rate) < 15.0f) {
         float cog = gps_data.cog;
         float diff = cog - imu_data.yaw;
         while (diff > 180.0f)  diff -= 360.0f;

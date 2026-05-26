@@ -71,6 +71,66 @@ class VideoGrabber(threading.Thread):
     def stop(self):
         self.running = False
 
+
+class YOLOInferenceWorker(threading.Thread):
+    """
+    YOLO çıkarımının (detector.detect) ana otonomi döngüsünü (24Hz) 
+    bloklamasını engellemek amacıyla asenkron çıkarım yapan thread sınıfı.
+    """
+    def __init__(self, detector):
+        super().__init__(daemon=True)
+        self.detector = detector
+        self.running = False
+        self.lock = threading.Lock()
+        
+        # Giriş verileri
+        self.frame = None
+        self.pitch = 0.0
+        self.roll = 0.0
+        self.new_frame_available = False
+        
+        # Çıkış verileri
+        self.latest_detections = []
+        
+    def update_frame(self, frame, pitch, roll):
+        with self.lock:
+            self.frame = frame.copy() if frame is not None else None
+            self.pitch = pitch
+            self.roll = roll
+            self.new_frame_available = True
+            
+    def get_latest_detections(self):
+        with self.lock:
+            return list(self.latest_detections)
+            
+    def run(self):
+        self.running = True
+        while self.running:
+            frame_to_process = None
+            p, r = 0.0, 0.0
+            
+            with self.lock:
+                if self.new_frame_available and self.frame is not None:
+                    frame_to_process = self.frame
+                    p = self.pitch
+                    r = self.roll
+                    self.new_frame_available = False
+                    
+            if frame_to_process is not None:
+                try:
+                    # YOLO/HSV tespiti gerçekleştir
+                    dets = self.detector.detect(frame_to_process, pitch=p, roll=r)
+                    with self.lock:
+                        self.latest_detections = dets
+                except Exception as e:
+                    logger.error(f"YOLO Thread çıkarım hatası: {e}")
+                    
+            time.sleep(0.005) # CPU'yu aşırı yormamak için kısa bekleme
+            
+    def stop(self):
+        self.running = False
+
+
 class IDANode:
     def __init__(self, serial_port: str = "/dev/ttyACM0", baudrate: int = 115200, 
                  model_path: str = None, video_source=0):
@@ -165,6 +225,9 @@ class IDANode:
         self.last_frame = None
         self.frozen_frames_counter = 0
         self.grabber = None
+        
+        # 6. YOLO Asenkron İşçi Thread'i
+        self.yolo_worker = YOLOInferenceWorker(self.detector)
         
         # 6. Yerel Engel Haritası (Costmap)
         self.costmap = LocalCostmap(
@@ -331,6 +394,10 @@ class IDANode:
         else:
             self.grabber = None
             
+        # Asenkron YOLO çıkarım thread'ini başlat (Görev 3)
+        self.yolo_worker.start()
+        logger.info("Asenkron YOLO Çıkarım Worker thread başlatıldı.")
+            
         logger.info("İDA otonomi düğümü başlatıldı. Görev tetiklenmesi bekleniyor...")
         
         # Otonomi Döngüsü (24 FPS Kontrol)
@@ -406,7 +473,12 @@ class IDANode:
                     # Görüntü İşleme ve Duba Tespiti (Görev 1.5: Pitch/Roll yalpalama telafisi dahil)
                     pitch = self.mission.current_pitch
                     roll = self.mission.current_roll
-                    detections = self.detector.detect(frame, pitch=pitch, roll=roll)
+                    
+                    # YOLO worker thread'ine en güncel kareyi ve yönelim verilerini besle (Görev 3)
+                    self.yolo_worker.update_frame(frame, pitch, roll)
+                    
+                    # YOLO worker'dan o anki en güncel duba listesini asenkron olarak al
+                    detections = self.yolo_worker.get_latest_detections()
                     
                     # Görev Durum Makinesi Adımı (Görüntü + Harita + Planlama)
                     self.mission.process_step(detections, self.costmap)
@@ -470,6 +542,14 @@ class IDANode:
                 self.grabber.join(timeout=1.0)
             except Exception as e:
                 logger.error(f"Grabber thread join hatası: {e}")
+                
+        # YOLO worker thread'ini durdur (Görev 3)
+        if hasattr(self, "yolo_worker") and self.yolo_worker is not None:
+            self.yolo_worker.stop()
+            try:
+                self.yolo_worker.join(timeout=1.0)
+            except Exception as e:
+                logger.error(f"YOLO worker thread join hatası: {e}")
         
         # Logları kapat
         self.logger_manager.stop()
