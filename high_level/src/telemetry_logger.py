@@ -178,6 +178,7 @@ class AsyncLoggerManager:
     def _telemetry_writer_loop(self):
         """
         Telemetri ve Costmap verilerini diske yazan arka plan döngüsü.
+        Yazma hatalarında (disk dolu/izinsiz) dosyayı kapatıp yazmayı durduran koruma içerir (Görev 14).
         """
         while self.running or not self.telemetry_queue.empty() or not self.costmap_queue.empty():
             try:
@@ -186,9 +187,15 @@ class AsyncLoggerManager:
                     data = self.telemetry_queue.get(timeout=0.1)
                     # Ana CSV'ye yaz (C4: kalıcı handle)
                     if self.csv_file:
-                        writer = csv.writer(self.csv_file)
-                        writer.writerow(data)
-                        self.csv_file.flush()
+                        try:
+                            writer = csv.writer(self.csv_file)
+                            writer.writerow(data)
+                            self.csv_file.flush()
+                        except Exception as e:
+                            logger.error(f"Ana CSV yazma hatası (disk dolu veya izin sorunu): {e}. Loglama devredışı bırakılıyor.")
+                            try: self.csv_file.close()
+                            except: pass
+                            self.csv_file = None
                     # Yedek CSV'ye yaz
                     if self.sec_csv_file:
                         try:
@@ -196,7 +203,10 @@ class AsyncLoggerManager:
                             writer.writerow(data)
                             self.sec_csv_file.flush()
                         except Exception as e:
-                            logger.error(f"Yedek USB CSV yazma hatası: {e}")
+                            logger.error(f"Yedek USB CSV yazma hatası: {e}. Yedek loglama devredışı bırakılıyor.")
+                            try: self.sec_csv_file.close()
+                            except: pass
+                            self.sec_csv_file = None
                     self.telemetry_queue.task_done()
                 except queue.Empty:
                     pass
@@ -207,15 +217,24 @@ class AsyncLoggerManager:
                     map_str = json.dumps(map_data) + "\n"
                     # Ana Costmap'e yaz (C4: kalıcı handle)
                     if self.costmap_file:
-                        self.costmap_file.write(map_str)
-                        self.costmap_file.flush()
+                        try:
+                            self.costmap_file.write(map_str)
+                            self.costmap_file.flush()
+                        except Exception as e:
+                            logger.error(f"Ana Costmap yazma hatası (disk dolu veya izin sorunu): {e}. Loglama devredışı bırakılıyor.")
+                            try: self.costmap_file.close()
+                            except: pass
+                            self.costmap_file = None
                     # Yedek Costmap'e yaz
                     if self.sec_costmap_file:
                         try:
                             self.sec_costmap_file.write(map_str)
                             self.sec_costmap_file.flush()
                         except Exception as e:
-                            logger.error(f"Yedek USB Costmap yazma hatası: {e}")
+                            logger.error(f"Yedek USB Costmap yazma hatası: {e}. Yedek loglama devredışı bırakılıyor.")
+                            try: self.sec_costmap_file.close()
+                            except: pass
+                            self.sec_costmap_file = None
                     self.costmap_queue.task_done()
                 except queue.Empty:
                     pass
@@ -253,12 +272,21 @@ class AsyncLoggerManager:
                 
                 # Videoya yaz
                 if self.video_writer is not None:
-                    self.video_writer.write(frame)
+                    try:
+                        self.video_writer.write(frame)
+                    except Exception as e:
+                        logger.error(f"Ana Video yazma hatası (disk dolu veya izin sorunu): {e}. Video kaydı devredışı bırakılıyor.")
+                        try: self.video_writer.release()
+                        except: pass
+                        self.video_writer = None
                 if self.sec_video_writer is not None:
                     try:
                         self.sec_video_writer.write(frame)
                     except Exception as e:
-                        logger.error(f"Yedek USB Video yazma hatası: {e}")
+                        logger.error(f"Yedek USB Video yazma hatası: {e}. Yedek video kaydı devredışı bırakılıyor.")
+                        try: self.sec_video_writer.release()
+                        except: pass
+                        self.sec_video_writer = None
                     
                 self.video_queue.task_done()
             except queue.Empty:

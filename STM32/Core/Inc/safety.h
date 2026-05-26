@@ -26,12 +26,19 @@ typedef struct {
     uint8_t emergency_triggered;  // PC13 EXTI fiziksel kesme bayrağı
 } SafetyStatus_t;
 
+// Görev Watchdog Tanımları (Görev 25 & 143)
+#define TASK_WD_TELEMETRY  (1 << 0)
+#define TASK_WD_NAVIGATION (1 << 1)
+#define TASK_WD_SAFETY     (1 << 2)
+
 // Emniyet modülü fonksiyonları
 void safety_init(float initial_voltage, float initial_yaw);
 void safety_update(float raw_voltage, float current_yaw, float left_cmd, float right_cmd, uint32_t dt_ms);
 uint8_t safety_is_ok(void);
 void safety_trigger_emergency(void);
 void safety_feed_watchdog(void);
+void safety_task_feed(uint8_t task_bit);
+uint8_t safety_check_task_watchdogs(uint32_t dt_ms);
 uint8_t safety_get_mode(void);
 void safety_set_mode(uint8_t mode);
 SafetyStatus_t safety_get_status(void);

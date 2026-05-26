@@ -99,7 +99,10 @@ class IDAParser:
             self.payload_len = b
             self.payload.clear()
             self.crc_buffer.clear()
-            if self.payload_len > 0:
+            # Emniyet Kontrolü: Maksimum paket boyu doğrulaması (Görev 15)
+            if self.payload_len > 128:
+                self.state = self.STATE_WAIT_SYNC1
+            elif self.payload_len > 0:
                 self.state = self.STATE_WAIT_PAYLOAD
             else:
                 self.state = self.STATE_WAIT_CRC

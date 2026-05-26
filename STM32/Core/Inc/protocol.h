@@ -151,7 +151,10 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b, 
             parser->payload_len = b;
             parser->header_buf[3] = b;
             parser->payload_idx = 0;
-            if (parser->payload_len > 0) {
+            // Emniyet Kontrolü: Maksimum paket boyu doğrulaması (Görev 15)
+            if (parser->payload_len > 128) {
+                parser->state = STATE_WAIT_SYNC1;
+            } else if (parser->payload_len > 0) {
                 parser->state = STATE_WAIT_PAYLOAD;
             } else {
                 parser->state = STATE_WAIT_CRC_LSB;

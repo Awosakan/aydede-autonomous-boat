@@ -324,14 +324,33 @@ static void parse_nmea_sentence(const char *sentence) {
             // Eğer ilk konum kilitlenmesi ise doğrudan ata.
             // Sonraki okumalarda ardışık iki veri arasındaki değişimi zamansal delta ile oranlayıp 
             // 6 m/s üzerindeki sıçramaları konum hatası olarak eliyoruz.
+            // GPS Outlier Sıçrama Filtresi (Kötü Senaryo 1) & İlk Fix Tuzağı Önlemi (Görev 16):
+            // İlk kilitlemede doğrudan tek bir veriyi almak yerine, ilk 5 verinin ortalamasını 
+            // referans konum olarak kurup outlier filtresini başlatıyoruz.
+            static double init_lat_sum = 0.0;
+            static double init_lon_sum = 0.0;
+            static uint8_t init_fix_count = 0;
+
             if (!gps_data.has_first_fix) {
-                gps_data.latitude = parsed_lat;
-                gps_data.longitude = parsed_lon;
-                gps_data.sog = parsed_speed;
-                gps_data.cog = parsed_cog;
-                gps_data.gps_lock = 1;
-                gps_data.has_first_fix = 1;
-                gps_data.last_update_time = now_ms;
+                if (init_fix_count < 5) {
+                    init_lat_sum += parsed_lat;
+                    init_lon_sum += parsed_lon;
+                    init_fix_count++;
+                    
+                    // Ortalama oluşana kadar geçici olarak her gelen veriyi doğrudan yazıyoruz
+                    gps_data.latitude = parsed_lat;
+                    gps_data.longitude = parsed_lon;
+                    gps_data.sog = parsed_speed;
+                    gps_data.cog = parsed_cog;
+                    gps_data.gps_lock = 1;
+                    gps_data.last_update_time = now_ms;
+                    
+                    if (init_fix_count == 5) {
+                        gps_data.latitude = init_lat_sum / 5.0;
+                        gps_data.longitude = init_lon_sum / 5.0;
+                        gps_data.has_first_fix = 1;
+                    }
+                }
             } else {
                 float dt = (float)(now_ms - gps_data.last_update_time) / 1000.0f;
                 if (dt <= 0.0f) dt = 0.1f; // Bölme hatasını önle

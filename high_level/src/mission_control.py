@@ -18,6 +18,7 @@ STATE_PARKUR2 = "PARKUR2_ENGEL_KACINMA"
 STATE_PARKUR3 = "PARKUR3_KAMIKAZE"
 STATE_RETURN = "RETURN_HOME"
 STATE_FAILSAFE = "FAILSAFE"
+STATE_LOITER = "LOITER"
 
 class MissionController:
     """
@@ -29,6 +30,7 @@ class MissionController:
         self.state = STATE_IDLE
         self.logger_manager = logger_manager
         self.serial_client = serial_client
+        self.pre_loiter_state = None
         
         # Konfigürasyon Yükleme
         if config is not None:
@@ -120,8 +122,23 @@ class MissionController:
             self.telemetry_received = True
 
     def set_waypoints(self, p1_wps: list, p2_wps: list, home_wp: list):
-        self.parkur1_waypoints = p1_wps
-        self.parkur2_waypoints = p2_wps
+        # Aşırı yakın waypoint'leri temizle (Jitter ve salınımı önlemek için - Görev 13)
+        def filter_close_wps(wps):
+            if not wps: return []
+            filtered = [wps[0]]
+            for wp in wps[1:]:
+                lat_diff = wp[0] - filtered[-1][0]
+                lon_diff = wp[1] - filtered[-1][1]
+                # Kabaca derece farkı üzerinden mesafe hesabı (1 derece ~ 111km)
+                dist_approx = math.sqrt(lat_diff**2 + lon_diff**2) * 111000.0
+                if dist_approx >= 0.5: # 0.5 metreden uzaksa ekle
+                    filtered.append(wp)
+                else:
+                    logger.info(f"Yol noktası filtreleyici: {wp} noktası, önceki noktaya çok yakın olduğu için elendi.")
+            return filtered
+
+        self.parkur1_waypoints = filter_close_wps(p1_wps)
+        self.parkur2_waypoints = filter_close_wps(p2_wps)
         self.home_waypoint = home_wp
 
     def process_step(self, detections: list, costmap) -> dict:
@@ -153,6 +170,8 @@ class MissionController:
             battery_voltage = self.battery_voltage
             last_telemetry_time = self.last_telemetry_time
             stm32_mode = self.stm32_mode
+            
+        camera_lost = getattr(self.serial_client, "camera_lost", False) or getattr(self.serial_client, "camera_frozen", False)
             
         # FSM Durum Zaman Aşımı Kontrolü
         active_states = [STATE_PARKUR1, STATE_PARKUR2, STATE_PARKUR3]
@@ -190,14 +209,22 @@ class MissionController:
             if now - last_telemetry_time > 1.5:
                 logger.error("Failsafe: STM32 telemetri bağlantısı koptu!")
                 self.transition_to(STATE_FAILSAFE)
-            # [Senaryo 1]: GPS Kilidi Kaybı
-            elif gps_lock == 0:
-                logger.warning("Failsafe: GPS kilidi kayboldu!")
-                self.transition_to(STATE_FAILSAFE)
-            # [Senaryo 8]: Batarya Voltajı Kritik Sınırı (3 saniye kesintisiz düşük voltaj filtresi)
+            # [Kötü Senaryo 8]: Batarya Voltajı Kritik Sınırı (3 saniye kesintisiz düşük voltaj filtresi)
             elif self.low_battery_start_time is not None and (now - self.low_battery_start_time > 3.0):
                 logger.error(f"Failsafe: Batarya voltajı 3 saniyeden uzun süredir kritik seviyede: {battery_voltage}V!")
                 self.transition_to(STATE_FAILSAFE)
+            # [STATE_LOITER Özel Kontrolleri] (Görev 112)
+            elif self.state == STATE_LOITER:
+                if gps_lock == 1:
+                    logger.info("GPS kilidi tekrar sağlandı. LOITER modundan çıkılıyor.")
+                    if self.pre_loiter_state:
+                        self.transition_to(self.pre_loiter_state)
+                    else:
+                        self.transition_to(STATE_PARKUR1)
+            # [Senaryo 1]: GPS Kilidi Kaybı -> LOITER (İstasyon Tutma) moduna geç
+            elif gps_lock == 0:
+                logger.warning("Failsafe: GPS kilidi kayboldu! LOITER moduna geçiliyor.")
+                self.transition_to(STATE_LOITER)
             # [Kötü Senaryo 5]: Kamera Merceğinin Tıkanması/Su Sıçraması Koruması
             elif getattr(self.serial_client, "detector", None) and getattr(self.serial_client.detector, "camera_blocked", False):
                 logger.error("Failsafe: Kamera merceği kapanned veya aşırı bulanıklaştı!")
@@ -257,7 +284,12 @@ class MissionController:
             target_heading = curr_yaw
             
         elif self.state == STATE_PARKUR1:
-            costmap.update(detections, curr_speed, dx_body, dy_body, dyaw_deg)
+            if not self.parkur1_waypoints:
+                logger.error("Failsafe: Parkur 1 waypoint listesi boş!")
+                self.transition_to(STATE_FAILSAFE)
+                return
+                
+            costmap.update(detections, curr_speed, dx_body, dy_body, dyaw_deg, camera_lost=camera_lost)
             # Sürüklenme düzeltmesi için önceki hedef noktayı belirle
             prev_wp = self.home_waypoint if (self.current_wp_idx == 0 or len(self.parkur1_waypoints) == 0) else self.parkur1_waypoints[self.current_wp_idx - 1]
             
@@ -276,7 +308,12 @@ class MissionController:
                 self.transition_to(STATE_PARKUR2)
                 
         elif self.state == STATE_PARKUR2:
-            costmap.update(detections, curr_speed, dx_body, dy_body, dyaw_deg)
+            if not self.parkur2_waypoints:
+                logger.error("Failsafe: Parkur 2 waypoint listesi boş!")
+                self.transition_to(STATE_FAILSAFE)
+                return
+                
+            costmap.update(detections, curr_speed, dx_body, dy_body, dyaw_deg, camera_lost=camera_lost)
             # Sürüklenme düzeltmesi için önceki hedef noktayı belirle
             prev_wp = (self.parkur1_waypoints[-1] if len(self.parkur1_waypoints) > 0 else self.home_waypoint) if self.current_wp_idx == 0 else (self.parkur2_waypoints[self.current_wp_idx - 1] if len(self.parkur2_waypoints) > 0 else self.home_waypoint)
             
@@ -294,11 +331,12 @@ class MissionController:
                 self.transition_to(STATE_PARKUR3)
                 
         elif self.state == STATE_PARKUR3:
-            target_buoy = None
-            for det in detections:
-                if det["class"] == self.target_color:
-                    target_buoy = det
-                    break
+            target_buoys = [d for d in detections if d["class"] == self.target_color]
+            if target_buoys:
+                # Mesafe ve confidence'a göre en iyi hedefi seç (Görev 149)
+                target_buoy = min(target_buoys, key=lambda d: d["distance"] / (d.get("confidence", 1.0) + 0.1))
+            else:
+                target_buoy = None
                     
             if target_buoy is not None:
                 self.last_target_time = now
@@ -319,7 +357,7 @@ class MissionController:
                 
                 # Hedef rengi costmap engeli olarak eklememek için filtrele (kendi hedefimizi itmeyelim)
                 non_target_detections = [d for d in detections if d["class"] != self.target_color]
-                costmap.update(non_target_detections, curr_speed, dx_body, dy_body, dyaw_deg)
+                costmap.update(non_target_detections, curr_speed, dx_body, dy_body, dyaw_deg, camera_lost=camera_lost)
                 _, planner_heading, _, _ = self.planner.plan(
                     curr_lat, curr_lon, curr_yaw, curr_speed,
                     [self.last_target_gps], 0, costmap, None, dt
@@ -327,7 +365,7 @@ class MissionController:
                 
                 # Eğer costmap'te engel yoksa doğrudan hedefe kilitlen (last_target_absolute_heading)
                 # Böylece yön titremesi engellenir ve test beklentisi karşılanır.
-                if len(costmap.get_serialized_grid()) == 0:
+                if costmap.is_empty():
                     target_heading = self.last_target_absolute_heading
                 else:
                     target_heading = planner_heading
@@ -347,13 +385,13 @@ class MissionController:
                 if elapsed_lost <= 2.0 and hasattr(self, "last_target_gps") and self.last_target_gps is not None:
                     # 1. Aşama: En son bilinen hedef GPS konumuna doğru APF planlamasıyla devam et
                     non_target_detections = [d for d in detections if d["class"] != self.target_color]
-                    costmap.update(non_target_detections, curr_speed, dx_body, dy_body, dyaw_deg)
+                    costmap.update(non_target_detections, curr_speed, dx_body, dy_body, dyaw_deg, camera_lost=camera_lost)
                     _, planner_heading, _, _ = self.planner.plan(
                         curr_lat, curr_lon, curr_yaw, curr_speed,
                         [self.last_target_gps], 0, costmap, None, dt
                     )
                     # Eğer costmap'te engel yoksa doğrudan hedefe kilitlen (last_target_absolute_heading)
-                    if len(costmap.get_serialized_grid()) == 0:
+                    if costmap.is_empty():
                         target_heading = self.last_target_absolute_heading
                     else:
                         target_heading = planner_heading
@@ -377,7 +415,7 @@ class MissionController:
                 
         elif self.state == STATE_RETURN:
             # Eve dönerken de engel algılama devam etmeli (B4 düzeltmesi)
-            costmap.update(detections, curr_speed, dx_body, dy_body, dyaw_deg)
+            costmap.update(detections, curr_speed, dx_body, dy_body, dyaw_deg, camera_lost=camera_lost)
             if self.home_waypoint:
                 prev_wp = self.parkur2_waypoints[-1] if len(self.parkur2_waypoints) > 0 else self.home_waypoint
                 target_speed, target_heading, _, reached_all = self.planner.plan(
@@ -393,12 +431,18 @@ class MissionController:
         elif self.state == STATE_FAILSAFE:
             target_speed = 0.0
             target_heading = curr_yaw
+            
+        elif self.state == STATE_LOITER:
+            # Akıntıda sürüklenmeyi önlemek için minimal hız + heading hold (Görev 112)
+            target_speed = self.config.get("loiter_speed_ms", 0.3)
+            target_heading = curr_yaw
 
-        # 3. Ramp Filtresi (Motor Komutlarında Yumuşatma)
-        if self.state in [STATE_FAILSAFE, STATE_IDLE]:
+        # 3. Ramp Filtresi (Motor Komutlarında Yumuşatma - Görev 11 & 46)
+        if self.state == STATE_IDLE:
             self.last_sent_speed = 0.0
             self.last_sent_heading = curr_yaw
         else:
+            # Failsafe dahil diğer tüm durumlarda kavitasyon ve şoku önlemek için ramp filtresini devrede tut
             # Hız Yumuşatma (İvme Sınırı)
             max_delta_speed = self.config.get("max_speed_accel", 0.8) * dt
             max_decel_speed = 3.0 * max_delta_speed # Deceleration can be faster to avoid overshoot
@@ -493,6 +537,9 @@ class MissionController:
                 self.logger_manager.flush()
             else:
                 time.sleep(0.05)
+
+        if new_state == STATE_LOITER:
+            self.pre_loiter_state = self.state
 
         # STATE_RETURN moduna geçerken planlayıcıyı ve costmap'i temizle (Hata: 206 çözümü)
         if new_state == STATE_RETURN:

@@ -62,11 +62,17 @@ void SysTick_Handler(void) {
 
 // USART1 RX DMA2 Stream 5 Kesmesi
 void DMA2_Stream5_IRQHandler(void) {
+    if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED) {
+        return;
+    }
     HAL_DMA_IRQHandler(&hdma_usart1_rx);
 }
 
 // USART1 Global Kesmesi (Telefon Haberleşmesi)
 void USART1_IRQHandler(void) {
+    if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED) {
+        return;
+    }
     uint32_t srval = huart1.Instance->SR;
     // ORE (Overrun), FE (Framing), NE (Noise), PE (Parity) hataları kontrolü
     if (srval & (USART_SR_ORE | USART_SR_FE | USART_SR_NE | USART_SR_PE)) {
@@ -91,6 +97,9 @@ void USART1_IRQHandler(void) {
 
 // USART2 Global Kesmesi (GPS Haberleşmesi)
 void USART2_IRQHandler(void) {
+    if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED) {
+        return;
+    }
     uint32_t srval = huart2.Instance->SR;
     if (srval & (USART_SR_ORE | USART_SR_FE | USART_SR_NE | USART_SR_PE)) {
         volatile uint32_t dummy = huart2.Instance->DR;

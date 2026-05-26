@@ -12,6 +12,7 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart1; // Telefon Haberleşmesi
 UART_HandleTypeDef huart2; // GPS Haberleşmesi
 DMA_HandleTypeDef hdma_usart1_rx;
+IWDG_HandleTypeDef hiwdg;
 
 // FreeRTOS Görev Tanımları
 TaskHandle_t TelemetryTaskHandle;
@@ -47,6 +48,7 @@ static void MX_I2C1_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_IWDG_Init(void);
 
 void StartTelemetryTask(void *argument);
 void StartNavigationTask(void *argument);
@@ -67,6 +69,7 @@ int main(void) {
     MX_I2C1_Init();        // IMU (MPU6050/9250)
     MX_ADC1_Init();        // Batarya Voltajı
     MX_TIM3_Init();        // Motor PWM Sinyalleri
+    MX_IWDG_Init();        // Donanımsal Watchdog (Görev 25 & 87 & 143)
 
     // Yazılım Kontrolörlerini İlklendir
     control_init();
@@ -87,10 +90,10 @@ int main(void) {
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 1500);
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 1500);
 
-    // UART Kesme Önceliklerini FreeRTOS Güvenli Seviyeye Ayarla (A8 düzeltmesi)
-    HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);
+    // UART Kesme Önceliklerini FreeRTOS Güvenli Seviyeye Ayarla (Görev 68)
+    HAL_NVIC_SetPriority(USART1_IRQn, 6, 0);
     HAL_NVIC_EnableIRQ(USART1_IRQn);
-    HAL_NVIC_SetPriority(USART2_IRQn, 6, 0);
+    HAL_NVIC_SetPriority(USART2_IRQn, 7, 0);
     HAL_NVIC_EnableIRQ(USART2_IRQn);
 
     // Telefon Haberleşmesi için DMA RX Circular modunu başlat
@@ -213,6 +216,7 @@ void StartTelemetryTask(void *argument) {
         
         HAL_UART_Transmit(&huart1, tx_packet, total_len, 15);
 
+        safety_task_feed(TASK_WD_TELEMETRY);
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
@@ -304,6 +308,7 @@ void StartNavigationTask(void *argument) {
         __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, left_pulse);
         __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, right_pulse);
 
+        safety_task_feed(TASK_WD_NAVIGATION);
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
@@ -324,6 +329,11 @@ void StartSafetyTask(void *argument) {
         if (!safety_is_ok()) {
             __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 1500);
             __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 1500);
+        }
+
+        safety_task_feed(TASK_WD_SAFETY);
+        if (safety_check_task_watchdogs(10)) {
+            HAL_IWDG_Refresh(&hiwdg);
         }
 
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -531,8 +541,8 @@ static void MX_DMA_Init(void) {
 
     __HAL_LINKDMA(&huart1, hdmarx, hdma_usart1_rx);
     
-    // Kesme önceliklerini ayarla
-    HAL_NVIC_SetPriority(DMA2_Stream5_IRQn, 5, 0);
+    // Kesme önceliklerini ayarla (Görev 68)
+    HAL_NVIC_SetPriority(DMA2_Stream5_IRQn, 6, 0);
     HAL_NVIC_EnableIRQ(DMA2_Stream5_IRQn);
 }
 
@@ -542,6 +552,14 @@ static void MX_GPIO_Init(void) {
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     __HAL_RCC_GPIOC_CLK_ENABLE();
+
+    // Hot Reboot Thrashing Önlemi (Görev 65): Motor PWM pinlerini (PA6, PA7) önce Çıkış Low olarak tut
+    HAL_GPIO_WritePin(GPIOA, MOTOR_LEFT_PIN | MOTOR_RIGHT_PIN, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = MOTOR_LEFT_PIN | MOTOR_RIGHT_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
     // EXTI PC13 Acil Durdurma Kesme Yapılandırması (Pull-up, Düşen Kenar Tetikleme)
     GPIO_InitStruct.Pin = EMERGENCY_STOP_PIN;
@@ -584,6 +602,15 @@ static void MX_GPIO_Init(void) {
     // EXTI Kesmesini etkinleştir
     HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+}
+
+static void MX_IWDG_Init(void) {
+    hiwdg.Instance = IWDG;
+    hiwdg.Init.Prescaler = IWDG_PRESCALER_64; // LSI (32kHz) / 64 = 500Hz clock
+    hiwdg.Init.Reload = 1000; // Timeout = 2.0 seconds (Görev 87 & 143)
+    if (HAL_IWDG_Init(&hiwdg) != HAL_OK) {
+        Error_Handler();
+    }
 }
 
 void Error_Handler(void) {

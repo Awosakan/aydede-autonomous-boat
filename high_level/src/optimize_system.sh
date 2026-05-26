@@ -91,6 +91,21 @@ if command -v adb &> /dev/null; then
   echo " -> Ekran çözünürlüğü 1080x1920, DPI 240 olarak sabitlendi."
 fi
 
+# 7. Seri Port USB İzinleri ve udev Kuralları (Görev 131 & 162)
+# Reconnect anında veya yeni port takıldığında izin sıfırlanmasını kalıcı olarak önlemek için.
+echo "[*] USB Seri port izinleri ve udev kuralları yapılandırılıyor..."
+if [ -n "$SUDO_USER" ]; then
+  usermod -a -G dialout "$SUDO_USER" &>/dev/null
+fi
+# udev kuralları ile okuma/yazma izinlerini dialout grubuna 0666 olarak ata
+echo 'KERNEL=="ttyUSB*", MODE="0666", GROUP="dialout"' > /etc/udev/rules.d/99-ida-serial.rules
+echo 'KERNEL=="ttyACM*", MODE="0666", GROUP="dialout"' >> /etc/udev/rules.d/99-ida-serial.rules
+if command -v udevadm &> /dev/null; then
+  udevadm control --reload-rules
+  udevadm trigger
+  echo " -> udev kuralları yenilendi ve uygulandı."
+fi
+
 # NOT (Erişilebilirlik ve Arka Plan İzinleri):
 # Android işletim sisteminin otonom arka plan servisini (Termux/chroot) sonlandırmasını önlemek için:
 # 1. Telefonda Magisk/MagiskHide veya Termux için "Erişilebilirlik Servisi" (Accessibility Service) aktif edilmelidir.

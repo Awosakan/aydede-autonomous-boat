@@ -53,7 +53,8 @@ class LocalCostmap:
         return blocked_cells > 5
 
     def update(self, detections: list, current_speed: float = 0.0, 
-               dx_body: float = 0.0, dy_body: float = 0.0, dyaw_deg: float = 0.0):
+               dx_body: float = 0.0, dy_body: float = 0.0, dyaw_deg: float = 0.0,
+               camera_lost: bool = False):
         """
         Gelen yeni duba tespitlerinin sınıfına göre ilgili katmanı günceller.
         Bot dönüşlerinde costmap rotasyon matrisi ve öteleme (Ego-motion compensation) uygular.
@@ -74,11 +75,12 @@ class LocalCostmap:
             self.grid_gates = cv2.warpAffine(self.grid_gates, M, (self.grid_size, self.grid_size), flags=cv2.INTER_NEAREST)
             self.grid_obstacles = cv2.warpAffine(self.grid_obstacles, M, (self.grid_size, self.grid_size), flags=cv2.INTER_NEAREST)
 
-        # 2. Eski harita katmanlarını sönümle (Decay)
-        self.grid_gates = (self.grid_gates * self.decay_factor).astype(np.uint8)
+        # 2. Eski harita katmanlarını sönümle (Decay - Görev 150)
+        decay = 0.70 if camera_lost else self.decay_factor
+        self.grid_gates = (self.grid_gates * decay).astype(np.uint8)
         self.grid_gates[self.grid_gates < self.min_cost_threshold] = 0
         
-        self.grid_obstacles = (self.grid_obstacles * self.decay_factor).astype(np.uint8)
+        self.grid_obstacles = (self.grid_obstacles * decay).astype(np.uint8)
         self.grid_obstacles[self.grid_obstacles < self.min_cost_threshold] = 0
         
         # 3. Dinamik Şişirme Yarıçapı Hesaplama - Görev 2.5
@@ -154,6 +156,9 @@ class LocalCostmap:
             
             if dist <= influence_distance_gates:
                 force_mag = K_repulsive * (cost / 100.0) * ((1.0 / dist) - (1.0 / influence_distance_gates)) * (1.0 / dist**2)
+                # APF İtici Kuvvet Sınırsızlığı Koruması (Görev 61)
+                force_mag = min(15.0, force_mag)
+                
                 # Simetrik itme (Botu tam zıt yöne iter, böylece sol ve sağ duba kuvvetleri ortada dengelenir)
                 rep_x += - (dx_m / dist) * force_mag
                 rep_y += - (dy_m / dist) * force_mag
@@ -170,14 +175,16 @@ class LocalCostmap:
             
             if dist <= influence_distance_obstacles:
                 force_mag = K_repulsive * (cost / 100.0) * ((1.0 / dist) - (1.0 / influence_distance_obstacles)) * (1.0 / dist**2)
+                # APF İtici Kuvvet Sınırsızlığı Koruması (Görev 61)
+                force_mag = min(15.0, force_mag)
                 
                 ux = - (dx_m / dist)
                 uy = - (dy_m / dist)
                 
-                # Eğer engel önümüzde, ön-solumuzda veya doğrudan karşı karşıya (head-on / dy_m <= 1.2m) ise 
+                # Eğer engel önümüzde, ön-solumuz veya ön-sağımızda doğrudan karşı karşıya (head-on / abs(dy_m) <= 1.2m) ise 
                 # sağa kaçışı (sancak) tetikleyecek asimetrik itme uyguluyoruz (COLREGs Kural 14 uyumu).
                 # Ancak sağ taraf kapalı/engelli ise kıyı şeridi güvenliği için bunu devre dışı bırakıyoruz (Görev 2.3).
-                if not right_blocked and dx_m > 0.0 and dy_m <= 1.2:
+                if not right_blocked and dx_m > 0.0 and abs(dy_m) <= 1.2:
                     # ~22 derecelik rotasyon (cos(22) = 0.927, sin(22) = 0.374)
                     cos_t = 0.927
                     sin_t = 0.374
@@ -189,6 +196,12 @@ class LocalCostmap:
                 rep_y += uy * force_mag
                         
         return rep_x, rep_y
+
+    def is_empty(self) -> bool:
+        """
+        Haritada herhangi bir engel olup olmadığını hızlıca kontrol eder (NumPy tabanlı - O(1) tahsisat).
+        """
+        return not np.any(self.grid > 0)
 
     def get_serialized_grid(self) -> list:
         rows, cols = np.where(self.grid > 0)

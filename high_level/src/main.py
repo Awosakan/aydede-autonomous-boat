@@ -177,21 +177,27 @@ class IDANode:
             }
         }
         
-        if os.path.exists(config_path):
+        self.config_path = config_path
+        self.config_mtime = 0.0
+        self.last_config_check_time = time.time()
+        
+        if os.path.exists(self.config_path):
             try:
                 import json
-                with open(config_path, "r", encoding="utf-8") as f:
+                self.config_mtime = os.path.getmtime(self.config_path)
+                with open(self.config_path, "r", encoding="utf-8") as f:
                     loaded_config = json.load(f)
                     self.config.update(loaded_config)
-                logger.info(f"Yapılandırma dosyası başarıyla yüklendi: {config_path}")
+                logger.info(f"Yapılandırma dosyası başarıyla yüklendi: {self.config_path}")
             except Exception as e:
                 logger.error(f"Yapılandırma dosyası yüklenirken hata oluştu: {e}")
         else:
-            logger.warning(f"Yapılandırma dosyası bulunamadı, varsayılanlar oluşturuluyor: {config_path}")
+            logger.warning(f"Yapılandırma dosyası bulunamadı, varsayılanlar oluşturuluyor: {self.config_path}")
             try:
                 import json
-                with open(config_path, "w", encoding="utf-8") as f:
+                with open(self.config_path, "w", encoding="utf-8") as f:
                     json.dump(self.config, f, indent=4)
+                self.config_mtime = os.path.getmtime(self.config_path)
             except Exception as e:
                 logger.error(f"Varsayılan yapılandırma dosyası yazılamadı: {e}")
  
@@ -216,6 +222,7 @@ class IDANode:
             model_path=model_path, 
             image_width=640, 
             image_height=480,
+            nms_threshold=self.config.get("nms_threshold", 0.6),
             classes_dict=self.config.get("yolo_classes", None)
         )
         
@@ -391,6 +398,13 @@ class IDANode:
             self.grabber = VideoGrabber(cap)
             self.grabber.start()
             logger.info("Asenkron Kamera Grabber thread başlatıldı.")
+            
+            # Kamera ısınma (warmup) aşaması: İlk 10 kareyi geçiştir (Lens flare ve pozlama dengesi için - Görev 10)
+            logger.info("Kamera warmup başlatıldı. Pozlama dengeleniyor...")
+            for _ in range(10):
+                time.sleep(0.1)
+                self.grabber.read()
+            logger.info("Kamera warmup tamamlandı.")
         else:
             self.grabber = None
             
@@ -411,6 +425,43 @@ class IDANode:
         try:
             while self.running:
                 loop_start = time.time()
+                
+                # Canlı Parametre Ayarı (Live Tuning) - Görev 9 (Her 5 saniyede bir config dosyasını kontrol et)
+                if loop_start - self.last_config_check_time > 5.0:
+                    self.last_config_check_time = loop_start
+                    if os.path.exists(self.config_path):
+                        try:
+                            mtime = os.path.getmtime(self.config_path)
+                            if mtime > self.config_mtime:
+                                self.config_mtime = mtime
+                                import json
+                                with open(self.config_path, "r", encoding="utf-8") as f:
+                                    loaded_config = json.load(f)
+                                    self.config.update(loaded_config)
+                                logger.info("Config dosyası güncellendi, parametreler canlı olarak yeniden yüklendi!")
+                                if hasattr(self, "mission") and self.mission is not None:
+                                    self.mission.config = self.config
+                                    if hasattr(self.mission, "planner") and self.mission.planner is not None:
+                                        self.mission.planner.waypoint_tolerance_m = self.config.get("waypoint_tolerance_m", 0.6)
+                                        self.mission.planner.nominal_speed_ms = self.config.get("nominal_speed_ms", 1.3)
+                                        self.mission.planner.max_speed_ms = self.config.get("max_speed_ms", 2.0)
+                                        self.mission.planner.min_speed_ms = self.config.get("min_speed_ms", 0.5)
+                                    
+                                    # Costmap Boyutunu ve Çözünürlüğünü Canlı Güncelle (Görev 132 & 163)
+                                    if hasattr(self, "costmap") and self.costmap is not None:
+                                        old_size = self.costmap.size_m
+                                        old_res = self.costmap.resolution
+                                        new_size = self.config.get("costmap_size_m", 40.0)
+                                        new_res = self.config.get("costmap_resolution", 0.25)
+                                        if old_size != new_size or old_res != new_res:
+                                            self.costmap = LocalCostmap(
+                                                size_m=new_size,
+                                                resolution=new_res,
+                                                inflation_radius_m=self.config.get("inflation_radius_m", 1.0)
+                                            )
+                                            logger.info(f"Costmap boyutu canlı güncellendi: {new_size}m, çözünürlük: {new_res}m")
+                        except Exception as e:
+                            logger.error(f"Canlı config yüklenirken hata: {e}")
                 
                 # STM32 bağlı değilse sahte telemetri besle (Failsafe ve Çevrimdışı Test Desteği)
                 if isinstance(self.ser, MockSerial):

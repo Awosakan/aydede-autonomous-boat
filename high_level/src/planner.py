@@ -75,7 +75,19 @@ class APFPlanner:
         # 1. Hedef noktaya olan mesafeyi ve bağıl konumu metre cinsinden hesapla
         dx_m, dy_m = gps_to_meters(filtered_lat, filtered_lon, target_lat, target_lon)
         dist_to_wp = math.sqrt(dx_m**2 + dy_m**2)
+
+        # Rota hedefinin costmap üzerindeki hücresinin maliyetini kontrol et (Görev 108)
+        # Eğer hedef engel altındaysa, İDA'nın engele çarpmadan devam edebilmesi için toleransı geçici olarak genişlet.
+        wp_row = costmap.center_idx - int(dy_m / costmap.resolution) if hasattr(costmap, "center_idx") else -1
+        wp_col = costmap.center_idx + int(dx_m / costmap.resolution) if hasattr(costmap, "center_idx") else -1
         
+        active_tolerance = self.waypoint_tolerance_m
+        if hasattr(costmap, "grid") and 0 <= wp_row < costmap.grid_size and 0 <= wp_col < costmap.grid_size:
+            wp_cost = costmap.grid[wp_row, wp_col]
+            if wp_cost > 45: # Hedef duba/engel üzerinde veya çok yakınında
+                active_tolerance = max(active_tolerance, 2.2) # Toleransı 2.2 metreye genişlet
+                logger.warning(f"Hedef yol noktası ({target_lat}, {target_lon}) engel bölgesinde (maliyet={wp_cost})! Geçiş toleransı {active_tolerance:.1f}m yapıldı.")
+
         # Noktaya ulaşıldı mı kontrolü
         reached = False
         if dist_to_wp < 0.6:  # Güvenli yakınlık yedek kontrolü
@@ -93,14 +105,19 @@ class APFPlanner:
                 boat_dx, boat_dy = gps_to_meters(prev_wp_gps[0], prev_wp_gps[1], filtered_lat, filtered_lon)
                 along_track = boat_dx * u_x + boat_dy * u_y
                 
-                # Kapı çizgisini / dikey düzlemi geçtik mi? Yanal sapmalarda sonsuz döngüyü önlemek için along-track kontrolü.
-                if along_track >= line_len:
-                    logger.info(f"Waypoint {current_wp_idx} geçiş düzlemi (along-track={along_track:.2f}m >= limit={line_len:.2f}m) üzerinden başarıyla ulaşıldı!")
+                # Enine sapma mesafesi (Cross-Track Error)
+                cte = boat_dx * (-u_y) + boat_dy * u_x
+                
+                # Kapı çizgisini / dikey düzlemi geçtik mi? 
+                # Yanal sapmalarda sonsuz döngüyü önlemek için along-track kontrolü.
+                # Ancak yanal sapmanın çok büyük olmaması (abs(cte) < 4.0) gerekir (Görev 7).
+                if along_track >= line_len and abs(cte) < 4.0:
+                    logger.info(f"Waypoint {current_wp_idx} geçiş düzlemi (along-track={along_track:.2f}m >= limit={line_len:.2f}m, yanal={cte:.2f}m) üzerinden başarıyla ulaşıldı!")
                     reached = True
                     
-        # Hiçbir referans yoksa veya fallback olarak normal toleransı kullan
-        if not reached and dist_to_wp < self.waypoint_tolerance_m:
-            logger.info(f"Waypoint {current_wp_idx} standart tolerans ({dist_to_wp:.2f}m < {self.waypoint_tolerance_m}m) ile ulaşıldı!")
+        # Hiçbir referans yoksa veya fallback olarak normal/aktif toleransı kullan
+        if not reached and dist_to_wp < active_tolerance:
+            logger.info(f"Waypoint {current_wp_idx} standart tolerans ({dist_to_wp:.2f}m < {active_tolerance:.1f}m) ile ulaşıldı!")
             reached = True
             
         if reached:
@@ -130,6 +147,11 @@ class APFPlanner:
                 # Enine sapma mesafesi (Cross-Track Error) - Rota hattına dik olan mesafe
                 # Vektörel çarpım (2D cross product): boat_vector x line_unit_vector
                 cte = boat_dx * (-u_y) + boat_dy * u_x
+                
+                # Rota çizgisi ortasından geçişte (sign change) integral birikimini sıfırla veya sönümle 
+                # (Over-shooting ve salınımı engellemek için - Görev 85 & 136)
+                if (cte > 0.0 and self.cte_integrator < 0.0) or (cte < 0.0 and self.cte_integrator > 0.0):
+                    self.cte_integrator *= 0.25 # Hızlı sönümleme
                 
                 # Enine sapma yönünde entegral düzeltme biriktir (dinamik dt kullanılır)
                 self.cte_integrator += cte * dt
@@ -229,7 +251,9 @@ class APFPlanner:
             target_speed = max(-self.nominal_speed_ms, min(reverse_speed, self.max_speed_ms))
         else:
             if angle_factor < 0:
-                target_speed = self.min_speed_ms 
+                # Keskin dönüşlerde akıntı sürüklenmesini engellemek için steerage way'i koruyacak şekilde 
+                # asgari hızı biraz daha yüksek tutuyoruz (Görev 9)
+                target_speed = max(self.min_speed_ms, 0.65) 
             else:
                 target_speed = self.nominal_speed_ms * (angle_factor ** 2)
                 if dist_to_wp < 5.0:

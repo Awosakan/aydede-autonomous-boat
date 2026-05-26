@@ -16,7 +16,7 @@ class BuoyDetector:
                  image_height: int = 480,
                  hfov: float = 80.0,  # Derece cinsinden Yatay Görüş Açısı (Horizontal Field of View)
                  conf_threshold: float = 0.35,
-                 nms_threshold: float = 0.4,
+                 nms_threshold: float = 0.6,
                  classes_dict: dict = None):
         
         self.image_width = image_width
@@ -301,9 +301,19 @@ class BuoyDetector:
     def _detect_hsv(self, frame, pitch: float = 0.0, roll: float = 0.0) -> list:
         """
         Yedek algılama mekanizması: HSV renk eşikleme ve kontur analizi.
+        Dinamik HSV eşikleme: Işık ve bulut durumlarına göre S ve V alt limitleri uyarlanır (Görev 15).
         """
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         detections = []
+        
+        # Görüntü ortalama parlaklığını hesapla
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        mean_brightness = np.mean(gray)
+        
+        # Parlaklığa bağlı alt limit kaymaları (128 referans alınarak)
+        # Hava karanlıksa/bulutluysa (mean_brightness < 128) offsetler negatif olur ve eşikler gevşetilir.
+        v_offset = int((mean_brightness - 128.0) * 0.4)
+        s_offset = int((mean_brightness - 128.0) * 0.2)
         
         color_ranges = {
             "orange_gate": [((5, 120, 100), (15, 255, 255)), ((165, 120, 100), (175, 255, 255))],
@@ -316,7 +326,15 @@ class BuoyDetector:
         for name, ranges in color_ranges.items():
             mask = None
             for lower, upper in ranges:
-                m = cv2.inRange(hsv, np.array(lower), np.array(upper))
+                # Eşikleri parlaklığa göre dinamik uyarla
+                low_h, low_s, low_v = lower
+                up_h, up_s, up_v = upper
+                
+                # S alt sınırını 40, V alt sınırını 30'un altına düşürmeyecek şekilde sınırla
+                adj_low_s = max(40, min(255, low_s + s_offset))
+                adj_low_v = max(30, min(255, low_v + v_offset))
+                
+                m = cv2.inRange(hsv, np.array([low_h, adj_low_s, adj_low_v]), np.array([up_h, up_s, up_v]))
                 mask = m if mask is None else cv2.bitwise_or(mask, m)
                 
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))

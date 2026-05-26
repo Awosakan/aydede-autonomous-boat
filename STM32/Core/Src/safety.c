@@ -3,6 +3,9 @@
 #include <math.h>
 
 static volatile SafetyStatus_t safety_state;
+static volatile uint32_t telemetry_wd_timer = 0;
+static volatile uint32_t navigation_wd_timer = 0;
+static volatile uint32_t safety_wd_timer = 0;
 
 // EMA filtresi katsayısı (0.05f yavaş/pürüzsüz tepki sağlar, ani dalgalanmaları önler)
 #define EMA_ALPHA 0.05f
@@ -15,6 +18,9 @@ void safety_init(float initial_voltage, float initial_yaw) {
     safety_state.stall_timer = 0;
     safety_state.last_yaw_for_stall = initial_yaw;
     safety_state.emergency_triggered = 0;
+    telemetry_wd_timer = 0;
+    navigation_wd_timer = 0;
+    safety_wd_timer = 0;
 }
 
 void safety_update(float raw_voltage, float current_yaw, float left_cmd, float right_cmd, uint32_t dt_ms) {
@@ -92,6 +98,24 @@ void safety_trigger_emergency(void) {
 
 void safety_feed_watchdog(void) {
     safety_state.watchdog_timer = 0;
+}
+
+void safety_task_feed(uint8_t task_bit) {
+    if (task_bit & TASK_WD_TELEMETRY)  telemetry_wd_timer = 0;
+    if (task_bit & TASK_WD_NAVIGATION) navigation_wd_timer = 0;
+    if (task_bit & TASK_WD_SAFETY)     safety_wd_timer = 0;
+}
+
+uint8_t safety_check_task_watchdogs(uint32_t dt_ms) {
+    telemetry_wd_timer += dt_ms;
+    navigation_wd_timer += dt_ms;
+    safety_wd_timer += dt_ms;
+
+    // Görev zaman aşımı limiti: 1500ms (Görev 87)
+    if (telemetry_wd_timer > 1500 || navigation_wd_timer > 1500 || safety_wd_timer > 1500) {
+        return 0; // Görev freeze algılandı
+    }
+    return 1; // Tüm görevler sağlıklı
 }
 
 uint8_t safety_get_mode(void) {

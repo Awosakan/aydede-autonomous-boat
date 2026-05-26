@@ -44,7 +44,7 @@ static float linearize_thrust(float thrust) {
 }
 
 MotorOutput_t control_update(float current_yaw, float target_yaw, float target_speed, float dt) {
-    MotorOutput_t output;
+    MotorOutput_t output = {0.0f, 0.0f};
     
     if (dt <= 0.0f) {
         output.left_thrust = 0.0f;
