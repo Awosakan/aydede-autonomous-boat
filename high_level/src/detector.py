@@ -360,11 +360,16 @@ class BuoyDetector:
         Görev 1.2 (Kenar kesilmesi telafisi) ve Görev 1.5 (Roll/Pitch yalpalama düzeltmesi) içerir.
         """
         x, y, w, h = bbox
-        w_px = max(1, w)
         
         # Görev 1.2: Ekran sınır kontrolü (Truncation) tespiti
         # Bounding box sol veya sağ kenara 2 pikselden yakınsa kırpılmış kabul edilir.
         is_truncated = (x <= 2) or (x + w >= self.image_width - 2)
+        
+        # Eğer kırpılma varsa, mesafe patlamasını önlemek için genişlik yerine yüksekliği referans alıyoruz
+        if is_truncated:
+            w_px = max(1, h)
+        else:
+            w_px = max(1, w)
         
         # Ham mesafe hesabı
         distance = (self.focal_length_px * self.BUOY_REAL_WIDTH_M) / w_px

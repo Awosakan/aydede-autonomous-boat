@@ -341,6 +341,24 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     }
 }
 
+// UART Hata Yönetim Callback (ORE - Overrun, FE - Frame Error, NE - Noise Error Temizleme)
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART1) {
+        // Hata bayraklarını temizle ve DMA alıcısını yeniden başlat
+        __HAL_UART_CLEAR_OREFLAG(huart);
+        __HAL_UART_CLEAR_NEFLAG(huart);
+        __HAL_UART_CLEAR_FEFLAG(huart);
+        HAL_UART_Receive_DMA(&huart1, usart1_rx_buf, USART1_RX_BUF_SIZE);
+    }
+    else if (huart->Instance == USART2) {
+        // Hata bayraklarını temizle ve kesme alıcısını yeniden başlat
+        __HAL_UART_CLEAR_OREFLAG(huart);
+        __HAL_UART_CLEAR_NEFLAG(huart);
+        __HAL_UART_CLEAR_FEFLAG(huart);
+        HAL_UART_Receive_IT(&huart2, &gps_rx_byte, 1);
+    }
+}
+
 // Acil Durdurma Butonu Fiziksel Kesmesi (EXTI PC13)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if (GPIO_Pin == EMERGENCY_STOP_PIN) {

@@ -174,9 +174,10 @@ class LocalCostmap:
                 ux = - (dx_m / dist)
                 uy = - (dy_m / dist)
                 
-                # Eğer engel önümüzde veya ön-solumuzda ise sağa kaçışı (sancak) tetikleyecek asimetrik itme uyguluyoruz.
+                # Eğer engel önümüzde, ön-solumuzda veya doğrudan karşı karşıya (head-on / dy_m <= 1.2m) ise 
+                # sağa kaçışı (sancak) tetikleyecek asimetrik itme uyguluyoruz (COLREGs Kural 14 uyumu).
                 # Ancak sağ taraf kapalı/engelli ise kıyı şeridi güvenliği için bunu devre dışı bırakıyoruz (Görev 2.3).
-                if not right_blocked and dx_m > 0.0 and dy_m <= 0.0:
+                if not right_blocked and dx_m > 0.0 and dy_m <= 1.2:
                     # ~22 derecelik rotasyon (cos(22) = 0.927, sin(22) = 0.374)
                     cos_t = 0.927
                     sin_t = 0.374

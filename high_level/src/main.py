@@ -422,6 +422,16 @@ class IDANode:
                         cv2.imshow("IDA Autonomy Monitor", annotated_frame)
                         if cv2.waitKey(1) & 0xFF == ord('q'):
                             break
+                else:
+                    # Kamera hatası veya kopması durumunda failsafe durum makinesi adımı (Failsafe ve Log devamlılığı)
+                    detections = []
+                    self.mission.process_step(detections, self.costmap)
+                    
+                    # Boş bir hata ekranı oluşturup logluyoruz
+                    err_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                    cv2.putText(err_frame, "KAMERA BAGLANTISI KOPUK / HATA", (80, 240), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    self.logger_manager.log_frame(err_frame)
                             
                 # 24 FPS kararlılığı için bekleme süresini ayarla
                 elapsed = time.time() - loop_start
