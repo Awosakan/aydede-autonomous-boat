@@ -1,212 +1,215 @@
-# İnsansız Deniz Aracı (İDA) Otonom Kontrol ve Seyrüsefer Sistemi
+# Autonomous Autonomous Surface Vehicle (ASV) Navigation & Control System
 
-Bu proje, **TEKNOFEST 2026 İnsansız Deniz Aracı Şartnamesi** standartlarına tam uyumlu olarak geliştirilmiş; **OnePlus 6 (Yüksek Seviye Otonomi)** ve **STM32F405RGT6 (Alçak Seviye Otopilot)** donanımları üzerinde koşan, F-35 standartlarında kararlılıkta tasarlanmış komple bir otonom seyrüsefer kontrol yazılımıdır.
+[Türkçe Sürüm / Turkish Version](README_TR.md)
 
----
-
-## 🛠️ Teknoloji Yığını (Tech Stack)
-
-Sistem, kaynak yönetimi, işlem hızı ve donanımsal güvenlik gereksinimlerini karşılamak amacıyla katmanlı bir teknoloji yığınıyla inşa edilmiştir:
-
-### 1. Yüksek Seviye Otonomi Katmanı (OnePlus 6 / Linux Chroot)
-* **İşletim Sistemi / Çalışma Ortamı:**
-  * **Ubuntu Base 22.04 LTS (ARM64):** Termux üzerinde çalışan minimal, yüksek performanslı Linux kök dosya sistemi (Chroot).
-  * **Termux & Termux:Boot:** Güç verildiği an yazılımı başlatan otomatik önyükleme (autoboot) altyapısı.
-  * **Android System Tweaks:** ADB WM (`window manager`) ve ekran yoğunluğu (`density`) optimizasyonları, Magisk arka plan servis koruması.
-* **Programlama Dili:** Python 3.10
-* **Kütüphaneler ve Altyapı:**
-  * **OpenCV DNN (Headless):** Kamera akışı alma, video loglama ve derin öğrenme modellerinin GPU (Adreno 630 OpenCL) üzerinde koşturulması.
-  * **NumPy:** Hızlı matris işlemleri, ızgara haritası (costmap) güncellemeleri ve potansiyel alan vektör hesaplamaları.
-  * **PySerial:** Otomatik kurtarma (auto-reconnect) özellikli, asenkron ve düşük gecikmeli seri haberleşme.
-  * **Ultralytics YOLOv8 (ONNX):** Duba tespiti için optimize edilmiş derin öğrenme model çıkarımı.
-
-### 2. Alçak Seviye Kontrol Katmanı (STM32F405RGT6 / Bare-Metal)
-* **İşletim Sistemi:** FreeRTOS (Çoklu görev yönetimi ve deterministik çalışma için).
-* **Programlama Dili:** Bare-Metal C (C99 Standardı)
-* **Donanım Hızlandırma ve Optimizasyonlar:**
-  * **STM32 FPU (Floating Point Unit):** SCB CPACR registerları üzerinden donanımsal float PID hesaplama.
-  * **ART Accelerator (Flash Cache/Prefetch):** 168 MHz SYSCLK hızında Flash bellek gecikmelerini sıfırlayan önbellek mekanizması.
-  * **DMA (Direct Memory Access):** İşlemciyi meşgul etmeden seri port verilerini RAM dairesel tamponuna yazan USART DMA (NDTR register takipli).
-  * **CRC16-ANSI:** İletişim paketlerinin veri bütünlüğünü doğrulayan sağlama algoritması.
-
-### 3. Simülasyon ve Test Altyapısı
-* **SITL (Software-in-the-Loop) Simulator:** Katamaran itki fiziğini, su sürüklenmesini, akıntı/rüzgar kuvvetlerini ve sanal kamera görüş alanını (FOV) simüle eden 2D OpenCV/Python test ortamı.
+This repository contains a production-grade, highly reliable autonomous navigation and control software suite designed for an **Autonomous Surface Vehicle (ASV) / Catamaran**. The system is fully compliant with the **TEKNOFEST 2026 ASV Competition Specifications** and features a dual-layer architecture: a **High-Level Autonomy Layer (Ubuntu Chroot on ARM64)** and a **Low-Level Autopilot Layer (Bare-metal C on STM32F405RGT6 running FreeRTOS)**, engineered to meet military-grade robustness and failsafe standards.
 
 ---
 
-## 🛠️ Sistem Mimarisi ve Veri Akışı
+## 🛠️ Technology Stack
+
+The project features a decoupled, hierarchical hardware and software topology designed to optimize processing throughput, real-time safety, and compute resource allocation:
+
+### 1. High-Level Autonomy Layer (OnePlus 6 / Linux Chroot)
+* **OS / Runtime Environment:**
+  * **Ubuntu Base 22.04 LTS (ARM64):** Runs as a lightweight chroot rootfs inside Android via Termux.
+  * **Termux & Termux:Boot:** Provides cold boot automation, executing startup scripts immediately upon device power-up.
+  * **Android System Tweaks:** ADB Window Manager adjustments, customized screen density profiles, and Magisk-managed background service locks to prevent CPU throttling.
+* **Programming Language:** Python 3.10
+* **Libraries & Core Frameworks:**
+  * **OpenCV Headless (with OpenCL Acceleration):** Handles camera streaming, video encoding/logging, and deep learning model executions using the Adreno 630 GPU.
+  * **NumPy:** Offloads matrix math, costmap updates, and vector calculations for path planning.
+  * **PySerial:** Asynchronous serial link management with sub-millisecond connection drop recovery.
+  * **Ultralytics YOLOv8 (ONNX format):** High-speed object detection for buoy classification.
+
+### 2. Low-Level Control Layer (STM32F405RGT6 / Bare-metal C)
+* **Real-time Operating System:** FreeRTOS (Ensures deterministic task scheduling and low jitter).
+* **Programming Language:** Bare-metal C (C99 standard compliance)
+* **Hardware Acceleration & Optimizations:**
+  * **FPU (Floating Point Unit):** Hardware-accelerated PID math using native FPU registers.
+  * **ART Accelerator:** Caches Flash pre-fetch instructions at 168 MHz SYSCLK, bypassing memory wait states.
+  * **DMA (Direct Memory Access):** Non-blocking USART ring buffer using DMA transfer streams (monitored by NDTR register tracking).
+  * **CRC16-ANSI:** Computes Modbus-compliant packet checksums in hardware.
+
+### 3. Simulation & Validation Environment
+* **SITL (Software-in-the-Loop) Simulator:** A 2D physics-based catamaran simulator modeling drag forces, water currents, randomized wind gusts (EMA-filtered), and virtual camera FOV boundaries.
+
+---
+
+## 🛠️ System Architecture & Data Flow
 
 ```mermaid
 graph TD
-    A[USB UVC Geniş Açı Kamera] -->|Video Frame| B[OnePlus 6 - Linux Chroot]
-    B -->|YOLOv8 ONNX / HSV Fallback| C[Duba Dedektörü]
-    C -->|Mesafe & Açı| D[Çift Katmanlı Costmap]
-    D -->|COLREGs İtici Güçler| E[APF Rota Planlayıcı]
-    E -->|Hedef Hız & Yönelim| F[Seri Protokol / protocol.py]
+    A[USB UVC Wide-Angle Camera] -->|Video Stream| B[OnePlus 6 - Linux Chroot]
+    B -->|YOLOv8 ONNX / HSV Fallback| C[Buoy Detector]
+    C -->|Distance & Bearing| D[Dual-Layer Costmap]
+    D -->|COLREGs Repulsive Vectors| E[APF Path Planner]
+    E -->|Target Speed & Heading| F[Serial Protocol / protocol.py]
     
-    F -->|USB VCP / Type-C| G[STM32F405RGT6 Otopilot]
-    H[MPU9250 IMU + GPS] -->|Sensör Fusion & Outlier Filtre| G
-    G -->|Yaw PID & Failsafe| I[Katamaran Sol/Sağ Motor ESC]
+    F -->|USB VCP / Type-C| G[STM32F405RGT6 Autopilot]
+    H[MPU9250 IMU + GPS] -->|Sensor Fusion & Outlier Filter| G
+    G -->|Yaw PID & Failsafes| I[Catamaran Left/Right Brushless ESCs]
 ```
 
 ---
 
-## 📊 En Ufak Görev Dağılımı ve Görev Dağılım Matrisi
+## 📊 Work Breakdown & Task Allocation Matrix
 
-Projedeki yazılımsal ve donanımsal işlevlerin, kod dosyaları, sınıf/fonksiyon seviyesinde en küçük görev dağılımı aşağıdaki tabloda verilmiştir:
+The breakdown of high-level and low-level software responsibilities, mapped directly to their respective source files and class components:
 
-| Modül / Özellik | Alt Görev | Sorumlu Dosya / Sınıf | Çalışma Seviyesi | Açıklama |
+| Module / Feature | Sub-task | Source File / Class | Layer | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| **Algılama (Perception)** | YOLO Model Çıkarımı | [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) -> `BuoyDetector.detect()` | Yüksek Seviye (Python) | YOLOv8 ONNX modelini çalıştırarak dubaların bounding box bilgilerini çıkarır. |
-| | HSV Renk Bölütleme | [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) -> `BuoyDetector.hsv_fallback()` | Yüksek Seviye (Python) | Derin öğrenme başarısız olduğunda veya karanlıkta yedek HSV filtresiyle duba tespiti yapar. |
-| | Lens Tıkanıklık Tespiti | [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) -> `BuoyDetector.check_lens()` | Yüksek Seviye (Python) | Kameraya su sıçraması, çamur veya mercek kapanmasını kontrast analiziyle saptar. |
-| | Zamansal Doğrulama | [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) -> `TemporalFilter` | Yüksek Seviye (Python) | Dalgalardan dolayı dubaların anlık kaybolup görünmesindeki gürültüleri filtreler. |
-| **Haritalama (Mapping)** | Costmap Izgara Güncelleme | [costmap.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/costmap.py) -> `LocalCostmap.update()` | Yüksek Seviye (Python) | Kamera tespitlerini İDA merkezli 2D egocentric doluluk haritasına (Occupancy Grid) işler. |
-| | Kapı Kuvvetleri (Symmetric) | [costmap.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/costmap.py) -> `LocalCostmap.get_gate_forces()` | Yüksek Seviye (Python) | Çift turuncu duba kapılarından geçerken İDA'nın tam ortadan hizalanmasını sağlar. |
-| | Engel İtme (COLREGs) | [costmap.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/costmap.py) -> `LocalCostmap.get_obstacle_forces()` | Yüksek Seviye (Python) | Sarı engellerden gelen itme kuvvetini 22° sancağa kırarak deniz trafik kurallarına uyum sağlar. |
-| **Seyrüsefer (Navigation)** | Rota Planlama (APF) | [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) -> `APFPlanner.plan()` | Yüksek Seviye (Python) | Hedef çekim gücü ile engellerden gelen itim kuvvetlerini vektörel olarak birleştirir. |
-| | Düzlem Geçiş Kontrolü | [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) -> `APFPlanner.plan()` (Along-Track) | Yüksek Seviye (Python) | Kapı çizgisi tam geçilmeden bir sonraki yol noktasına dönülmesini (erken dönüş) engeller. |
-| | Enine Sapma Entegrali | [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) -> `self.cte_integrator` | Yüksek Seviye (Python) | Akıntı veya sert rüzgar sürüklemesini saptayıp zıt yönde dümen açısı hesaplar. |
-| | Dönüş Hızı Koruması | [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) -> `angle_factor` | Yüksek Seviye (Python) | Keskin U dönüşlerinde katamaranın devrilmesini önlemek için hızı otomatik sınırlar. |
-| **Görev Kontrol (FSM)** | Durum Makinesi | [mission_control.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/mission_control.py) -> `MissionController` | Yüksek Seviye (Python) | Nokta Takip, Engel Kaçınma, Kamikaze ve Failsafe durum geçişlerini koordine eder. |
-| | Öngörülü Sanal Çit | [mission_control.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/mission_control.py) -> `Geofence` | Yüksek Seviye (Python) | İDA'nın mevcut hızıyla 2 saniye sonra 100m sınırını aşıp aşmayacağını kestirerek motorları kapatır. |
-| | Failsafe Tetikleyicileri | [mission_control.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/mission_control.py) -> `Failsafe` | Yüksek Seviye (Python) | Düşük pil, GPS kaybı, telemetri kopması veya kamera tıkanmasında acil durum modunu tetikler. |
-| **Sistem / Altyapı** | CPU Çekirdek Ataması | [main.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/main.py) | Yüksek Seviye (Python) | Seyrüsefer işlemlerini Snapdragon'un büyük Kryo Gold çekirdeklerine (affinity 4-7) kilitler. |
-| | Otomatik Reconnect | [main.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/main.py) -> `Serial client loop` | Yüksek Seviye (Python) | Fiziksel USB temassızlıklarında seri bağlantıyı 1ms içinde otomatik olarak ayağa kaldırır. |
-| | Çöp Toplayıcı (GC) Ayarı | [main.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/main.py) -> `gc.collect()` | Yüksek Seviye (Python) | Python'ın zamansız çöp toplama duraklamalarını (stop-the-world) engellemek için GC'yi manuel yönetir. |
-| | Sistem Güç & Saat Yamaları | [optimize_system.sh](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/optimize_system.sh) | İşletim Sistemi (Bash) | USB askıya alma (autosuspend) kapatma, CPU Governor performance ayarı ve RF modem kapatma. |
-| | Şarj / USB Boot Bypass | [setup_autoboot.sh](file:///c:/Users/Şahakan/Desktop/aydede/setup_autoboot.sh) | İşletim Sistemi (Bash) | Telefon kapalıyken USB kablosu (güç) takıldığı an doğrudan boot etmesini sağlayan şarj yaması. |
-| **Donanım / Haberleşme** | Seri Paket Protokolü | [protocol.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/protocol.py) & [protocol.h](file:///c:/Users/Şahakan/Desktop/aydede/low_level/include/protocol.h) | Çift Katmanlı (C/Py) | CRC16 ANSI doğrulamalı paketleme ve telemetri ayrıştırma işlemlerini yürütür. |
-| | DMA Dairesel Tampon | [main.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/main.c) -> `DMA2_Stream5` | Alçak Seviye (C) | UART DMA NDTR sayacıyla sıfır CPU yüküyle gelen seri verileri RAM dairesel arabelleğine yazar. |
-| **Alçak Seviye Kontrol** | Yaw PID Hesaplama | [control.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/control.c) -> `PID_Update()` | Alçak Seviye (C) | Açı taşması (-180° / +180° sarmalaması) korumalı dümen açısı ve rota sabitleme PID hesabı. |
-| | İtki Eşleme | [control.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/control.c) -> `Control_UpdateMotors()` | Alçak Seviye (C) | Planlanan hız ve yönelim komutlarını katamaranın Sol ve Sağ ESC/Fırçasız motor PWM sinyallerine böler. |
-| | Donanımsal Watchdog | [safety.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/safety.c) -> `Safety_Check()` | Alçak Seviye (C) | Sinyal kaybı, RC kumanda kopması veya telefon çökmesi durumunda motorları kilitleyen emniyet halkası. |
-| | Sensör Süzgeçleri | [sensors.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/sensors.c) | Alçak Seviye (C) | NMEA GPS verilerini ayrıştırır, MPU9250 IMU ve manyetometre verilerini tamamlayıcı filtreyle birleştirir. |
+| **Perception** | YOLO Inference | [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) -> `BuoyDetector.detect()` | High-Level (Python) | Executes YOLOv8 ONNX model for real-time bounding box extraction of buoys. |
+| | HSV Color Segmentation | [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) -> `BuoyDetector.hsv_fallback()` | High-Level (Python) | Fallback algorithm using BGR-to-HSV filtering during dark/glare edge-cases. |
+| | Lens Occlusion Check | [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) -> `BuoyDetector.check_lens()` | High-Level (Python) | Monitors camera lens for blockage, dirt, or splash occlusion using contrast variance analysis. |
+| | Temporal Validation | [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) -> `TemporalFilter` | High-Level (Python) | Filters out high-frequency noise from wave crests using a multi-frame rolling validation gate. |
+| **Mapping** | Costmap Grid Update | [costmap.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/costmap.py) -> `LocalCostmap.update()` | High-Level (Python) | Generates a 2D egocentric occupancy grid map updated with camera detections and ego-motion warping. |
+| | Symmetric Gate Force | [costmap.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/costmap.py) -> `LocalCostmap.get_gate_forces()` | High-Level (Python) | Generates attractive/centering forces when navigating between gate-buoy pairs. |
+| | COLREGs Obstacle Force | [costmap.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/costmap.py) -> `LocalCostmap.get_obstacle_forces()` | High-Level (Python) | Implements asymmetric repulsive fields (22° starboard rotation) for maritime traffic rules compliance. |
+| **Navigation** | Path Planning (APF) | [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) -> `APFPlanner.plan()` | High-Level (Python) | Merges attractive target fields and repulsive obstacle vectors into a single navigation vector. |
+| | Waypoint Plane Check | [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) -> `APFPlanner.plan()` (Along-Track) | High-Level (Python) | Prevents premature turning at gates by checking along-track plane crossings. |
+| | Cross-Track Integration | [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) -> `self.cte_integrator` | High-Level (Python) | Integrates cross-track error (CTE) over time to counteract drift from water currents and wind. |
+| | Cornering Speed Limit | [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) -> `angle_factor` | High-Level (Python) | Limits linear speed during sharp U-turns to prevent catamaran capsizing. |
+| **Mission Control (FSM)**| Finite State Machine | [mission_control.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/mission_control.py) -> `MissionController` | High-Level (Python) | Orchestrates transitions between Waypoint Follow, Obstacle Avoidance, Kamikaze Charge, and Failsafe states. |
+| | Predictive Geofence | [mission_control.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/mission_control.py) -> `Geofence` | High-Level (Python) | Checks if current trajectory will cross the 100m home fence in the next 2s. Also manages 85m soft-fail slowdown. |
+| | Failsafe Triggers | [mission_control.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/mission_control.py) -> `Failsafe` | High-Level (Python) | Monitors low voltage, GPS lock loss, telemetry timeout, and camera crashes to trigger emergency modes. |
+| **System Infrastructure** | CPU Affinity Lock | [main.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/main.py) | High-Level (Python) | Pins high-priority autonomy threads to Snapdragon's Kryo Gold cores (cores 4-7). |
+| | Auto Reconnect | [main.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/main.py) -> `Serial client loop` | High-Level (Python) | Performs sub-millisecond connection recoveries on serial USB VCP lines. |
+| | Manual GC Tuning | [main.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/main.py) -> `gc.collect()` | High-Level (Python) | Manually invokes garbage collection during idle periods to prevent timing jitter (stop-the-world spikes). |
+| | OS Optimization Script | [optimize_system.sh](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/optimize_system.sh) | OS Layer (Bash) | Disables USB autosuspend, sets CPU governor to 'performance', and powers off cellular/RF hardware. |
+| | Boot-on-Power Patch | [setup_autoboot.sh](file:///c:/Users/Şahakan/Desktop/aydede/setup_autoboot.sh) | OS Layer (Bash) | Configures Android bootloader triggers to boot the OS immediately upon charger/USB power attachment. |
+| **Communication Link** | Packet Protocol | [protocol.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/protocol.py) & [protocol.h](file:///c:/Users/Şahakan/Desktop/aydede/low_level/include/protocol.h) | Dual-Layer (C/Py) | Packs data with Modbus CRC16-Modbus checksum validation and handles version verification. |
+| | DMA Circular Buffer | [main.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/main.c) -> `DMA2_Stream5` | Low-Level (C) | Feeds received bytes into the parser via circular USART DMA without CPU intervention. |
+| **Low-Level Control** | Yaw PID Controller | [control.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/control.c) -> `PID_Update()` | Low-Level (C) | Executes yaw rate and orientation PID calculations with wrap-around (-180° to +180°) error correction. |
+| | Thruster Thrust Mixer | [control.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/control.c) -> `Control_UpdateMotors()` | Low-Level (C) | Converts target speed and heading commands into differential ESC PWM pulse durations. |
+| | Hardware Watchdogs | [safety.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/safety.c) -> `Safety_Check()` | Low-Level (C) | Evaluates task check-ins, RC links, and telemetry streams to block outputs if a crash is detected. |
+| | Sensor Filters | [sensors.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/sensors.c) | Low-Level (C) | Parses NMEA GPS strings and fuses MPU9250 IMU/Compass measurements via complementary filtering. |
 
 ---
 
-## 📂 Dosya Yapısı ve Kod Linkleri
+## 📂 Repository Structure
 
-* **[high_level/src/](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src)** - Telefon Üzerinde Çalışan Üst Seviye Karar Katmanı
-  * [main.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/main.py) - Giriş noktası. Thread yönetimi, USB reconnect, CPU Affinity ve bellek optimizasyonları.
-  * [protocol.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/protocol.py) - STM32 ile telemetri ve komut paketlerini CRC16 ile eşleyen binary haberleşme modülü.
-  * [telemetry_logger.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/telemetry_logger.py) - Bellek sızıntısı korumalı (OOM önleme kuyruklu) asenkron video, CSV ve JSON costmap loglayıcı.
-  * [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) - ONNX YOLOv8 duba dedektörü, HSV renk bölütleme yedek filtresi ve mercek tıkanıklık koruması.
-  * [costmap.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/costmap.py) - Yerel Occupancy Grid. Kapılar için dengeli, engeller için COLREGs uyumlu (sağa yönlendirmeli) itme üretimi.
-  * [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) - Yapay Potansiyel Alanlar (APF) rota planlayıcı. Akıntı sürüklenmesine karşı CTE integral terimi ve kapılardan tam geçiş için Along-Track Plane Crossing mantığı.
-  * [mission_control.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/mission_control.py) - Sonlu Durum Makinesi (FSM). 100m Öngörülü Sanal Çit koruması ve donanım failsafe kararları.
-  * [optimize_system.sh](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/optimize_system.sh) - Android CPU governor sabitleme, rfkill modem kapatma, adb pencere boyutu ayarları.
+* **[high_level/src/](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src)** - High-Level Decision Autonomy (Runs on Phone SBC)
+  * [main.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/main.py) - Main entrypoint. Handles threading, USB auto-reconnections, CPU Affinity settings, and GC overrides.
+  * [protocol.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/protocol.py) - Binary packet encoder/decoder using CRC16 validation and version matching.
+  * [telemetry_logger.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/telemetry_logger.py) - Memory-safe (queue-backed) logger writing MP4 frames, CSV telemetry logs, and JSON costmap frames.
+  * [detector.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/detector.py) - Yolov8 model runtime wrapper, HSV threshold segmentation, and lens blockage checking.
+  * [costmap.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/costmap.py) - Local occupancy grid map generating symmetric attractive fields for gates and asymmetric COLREGs fields.
+  * [planner.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/planner.py) - Artificial Potential Fields (APF) navigator with Cross-Track Error integration and along-track check planes.
+  * [mission_control.py](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/mission_control.py) - Central Finite State Machine. Implements predictive geofences and low-voltage triggers.
+  * [optimize_system.sh](file:///c:/Users/Şahakan/Desktop/aydede/high_level/src/optimize_system.sh) - OS optimizations (performance CPU profile, disabling power suspend and cellular radios).
 
-* **[low_level/](file:///c:/Users/Şahakan/Desktop/aydede/low_level)** - STM32F405RGT6 Otopilot Kodları (Bare-Metal C)
-  * [main.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/main.c) - DMA NDTR register okumalı dairesel arabellek çözücü, FPU donanım aktivasyonu ve ART Flash hızlandırıcı.
-  * [control.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/control.c) - Açı sarmalamalı PID yaw kontrolü ve katamaran motor itki diferansiyel eşleyicisi.
-  * [safety.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/safety.c) - Donanımsal arıza kilidi (latch), watchdogs, acil stop kesmeleri.
-  * [sensors.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/sensors.c) - GPS parser, I2C kilitlenme kurtarma (9 clock darbesi), tamamlayıcı yön filtresi.
+* **[low_level/](file:///c:/Users/Şahakan/Desktop/aydede/low_level)** - STM32F405RGT6 Autopilot Code (Bare-metal C)
+  * [main.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/main.c) - FreeRTOS task setups, USART DMA circular buffer parsing, and FPU/ART cache initializations.
+  * [control.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/control.c) - Angular error PID solvers and differential motor thruster mixers.
+  * [safety.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/safety.c) - Independent Watchdog (IWDG) task checkers, hardware failsafes, and EXTI interrupt binders.
+  * [sensors.c](file:///c:/Users/Şahakan/Desktop/aydede/low_level/src/sensors.c) - NMEA GPS decoders, I2C recovery clocks, and complementary orientation filters.
 
-* **[scratch/](file:///c:/Users/Şahakan/Desktop/aydede/scratch)** - Test ve Doğrulama
-  * [sitl_simulator.py](file:///c:/Users/Şahakan/Desktop/aydede/scratch/sitl_simulator.py) - Katamaran fiziği, akıntı sürüklemesi, sanal lidar/kamera görüşü içeren 2D görsel simülatör.
-  * [test_gate_navigation.py](file:///c:/Users/Şahakan/Desktop/aydede/scratch/test_gate_navigation.py) - Along-track kapı geçiş mantığının dikey eksende doğruluğunu ölçen headless test betiği.
-
----
-
-## 🌊 Otonom Sistemin Suda Karşılaştığı 10 Kötü Senaryo Koruması
-
-İDA'nın fiziksel testlerde batmasını veya kontrolden kaçmasını önlemek üzere tasarlanan 10 kritik koruma mekanizması:
-1. **GPS Konum Sıçraması (Jitter):** Dinamik dt tabanlı outlier süzgeciyle 6.0 m/s'den hızlı yapay yer değişimleri elenir.
-2. **Pusula Manyetik Bozulması:** Metal gövde veya manyetik alan nedeniyle pusula saptığında, tekne hareket halindeyken GPS COG (Course Over Ground) verisi referans yön olarak pusulayı düzeltir.
-3. **I2C Hattı Kilitlenmesi (Sensor Crash):** MPU9250 okumalarında kilitlenme yaşanırsa, SCL pinine donanımsal 9 clock darbesi gönderilerek hat otomatik resetlenir.
-4. **Rüzgar/Akıntı Sürüklemesi:** Rota çizgisinden sürüklenmeler planlayıcı içindeki Enine Sapma Entegrali (CTE) ile saptanarak akıntıya karşı dirençli yön komutu üretilir.
-5. **Kamera Merceği Kapanması:** Görüntü analiziyle kontrast ve parlaklık sürekli izlenerek kameranın tıkanması saptanır ve güvenli moda (`FAILSAFE`) geçilir.
-6. **Dalgalardan Anlık Duba Kayıpları:** Dubaların 5 ardışık kareden en az 3'ünde görülme şartı (Temporal Filter) ile dalgaların duba kapatma gürültüleri elenir.
-7. **Haberleşme Kablosu Çıkması / Donma:** 500 ms boyunca telefondan veri paketi gelmezse STM32 otopilotu motor güçlerini anında keser.
-8. **Anlık Pil Voltaj Çökmesi (Sag):** Motorların ani tork çekmesiyle pilde yaşanan dalgalanmalar EMA filtresiyle süzülür, kesintisiz 3s düşük voltaj olmadıkça motorlar kapatılmaz.
-9. **Yosun Dolanması/Pervane Sıkışması:** Yüksek dönüş veya hız komutuna rağmen teknenin dönemediği (yaw_rate < 2.0 deg/s) saptanırsa motor korumak için sistem kilitlenir.
-10. **Teknenin Kaçıp Gitmesi (Flyaway):** Kalkış noktasından 100 metrelik Geofence sınırı aşılmadan 2 sn önce İDA'nın mevcut hızıyla frenleme mesafesi hesaplanır ve acil stop tetiklenir.
+* **[scratch/](file:///c:/Users/Şahakan/Desktop/aydede/scratch)** - Verification & SITL Test Scripts
+  * [sitl_simulator.py](file:///c:/Users/Şahakan/Desktop/aydede/scratch/sitl_simulator.py) - 2D visual SITL simulator modeling catamaran drag, wind gusts, water current drift, and virtual FOV.
+  * [test_gate_navigation.py](file:///c:/Users/Şahakan/Desktop/aydede/scratch/test_gate_navigation.py) - Headless check script validating along-track gate transitions.
 
 ---
 
-## 🚀 SITL Simülatörünü Çalıştırma
+## 🌊 Failsafe & Disaster Recovery Systems
 
-Geliştirilen tüm algoritmaları göle veya denize inmeden önce test etmek için 2D fizik simülatörünü çalıştırabilirsiniz.
+Ten robust software mitigation strategies to protect the vessel from physical damage and water entry:
+1. **GPS Position Jitter Filter:** Filters out coordinate jumps larger than 6.0 m/s using a dynamic dt-based window.
+2. **Magnetic Deviation Correction:** In the event of magnetic interference from on-board electronics, uses GPS Course Over Ground (COG) to correct compass headings dynamically.
+3. **I2C Sensor Lockup Recovery:** Automatically resets the sensor SCL line by toggling 9 clock pulses if IMU read blockages are detected.
+4. **Current/Wind Drift Integration:** Active CTE (Cross-Track Error) integration computes correction angles to steer back on path in high winds or strong currents.
+5. **Camera Lens Blockage Failsafe:** Detects camera blockage, salt water splash, or mud on the lens via variance analysis and falls back to a safe `FAILSAFE` state.
+6. **Temporal Detection Filter:** Eliminates false alarms and camera flicker caused by sun reflections or wave crests by validating detections across 5 consecutive frames.
+7. **USB Cable Drop Failsafe:** If the phone-to-STM32 USB cable is disconnected or packets stop for >500ms, the STM32 kills thruster outputs immediately.
+8. **Battery Sag Protection:** Utilizes EMA filtering to bypass short-term voltage sags caused by sudden motor torque loads; only shuts down motor output if low voltage persists for >3s.
+9. **Propeller Jam / Entanglement Failsafe:** Detects zero rotation rates under high yaw thrust conditions (indicating seaweed or rope entanglement) and stops thrusters to protect motors.
+10. **Flyaway Prevention Geofence:** Employs a predictive home geofence. If current speed will cross the 100m home boundary in the next 2s, it drops to a safe return speed or cuts power.
 
-### 1. Kütüphaneleri Yükleyin
+---
+
+## 🚀 Running the SITL Simulator
+
+You can test all autonomy algorithms and FSM behaviors in the 2D SITL simulator environment:
+
+### 1. Install Dependencies
 ```bash
 pip install opencv-python numpy
 ```
 
-### 2. Simülatörü Başlatın
+### 2. Run the Simulator
 ```bash
 python scratch/sitl_simulator.py
 ```
-* **Kırmızı duba:** Kamikaze hedefini, **Sarı dubalar** kaçınılması gereken engelleri (COLREGs uyumlu sağdan kaçış), **Çift Turuncu dubalar** ise kapı sınırlarını temsil eder.
-* İDA kapıların tam ortasından simetrik olarak hizalanarak geçer.
-* Simülasyon penceresi etkinken çıkış yapmak için `q` tuşuna basın.
+* **Red Buoy:** The Kamikaze Target.
+* **Yellow Buoys:** Obstacles to avoid (following COLREGs rules by steering starboard).
+* **Turround Gate Pairs:** Path kapıları which the ASV navigates through.
+* Press `q` to terminate the simulator run.
 
 ---
 
-## 📦 Tek Klasörde Çevrimdışı Linux Chroot Kurulumu (`phone_assets`)
+## 📦 Offline Chroot Environment Setup (`phone_assets`)
 
-İDA otonomi sisteminin telefonda çalışması için gereken tüm sistem bağımlılıkları ve **Ubuntu Base 22.04 ARM64** imajı tek bir klasörde (`phone_assets/`) bir araya getirilmiştir. Bu sayede telefonda kurulum yaparken internet bağlantısına ihtiyaç duyulmaz.
+To facilitate on-field terminal operations without cellular internet connections, a precompiled **Ubuntu Base 22.04 ARM64** rootfs and required dependencies are bundled under `phone_assets/`.
 
-### Çevrimdışı Kurulum Adımları:
-1. Tüm `aydede` klasörünü telefonun Termux ev dizinine kopyalayın (`/data/data/com.termux/files/home/aydede`).
-2. Termux'ta root yetkisi alarak kurulum betiğini çalıştırın:
+### Setup Steps:
+1. Copy the `aydede` folder into your Termux home directory (`/data/data/com.termux/files/home/aydede`).
+2. Run the root installer script in Termux:
    ```bash
    su
    sh /data/data/com.termux/files/home/aydede/phone_assets/setup_chroot.sh
    ```
-3. Kurulum bittiğinde otonomi sistemi `/data/local/ubuntu` dizini altında tamamen hazır olacaktır.
-4. Chroot ortamına manuel girmek veya donanımları bağlamak için:
-   * Donanımları bağlamak için: `su -c "sh /data/data/com.termux/files/home/aydede/phone_assets/chroot_mount.sh mount"`
-   * Chroot'a girmek için: `su -c "chroot /data/local/ubuntu /bin/bash"`
+3. Once completed, the Ubuntu shell will be configured under `/data/local/ubuntu`.
+4. Command utilities:
+   * To mount Android device nodes: `su -c "sh /data/data/com.termux/files/home/aydede/phone_assets/chroot_mount.sh mount"`
+   * To enter the chroot root environment: `su -c "chroot /data/local/ubuntu /bin/bash"`
 
 ---
 
-## 🛡️ STM32 Sağlık ve Emniyet Yönetimi (Safety Management - Madde 3)
+## 🛡️ STM32 Health & Safety Management (Safety Management)
 
-İDA'nın fiziksel emniyeti ve sistem bütünlüğü, STM32 otopilotu üzerinde çalışan katmanlı donanım/yazılım korumalarıyla güvenceye alınmıştır:
+Vessel safety is monitored by low-level FreeRTOS watchdog routines:
 
-1. **Çoklu Görev Watchdog Sistemi (Task-Level Watchdog & IWDG):**
-   * Mikrodenetleyicinin kilitlenmesini engellemek için bağımsız watchdog (IWDG) donanımı aktif edilmiştir.
-   * FreeRTOS üzerinde çalışan `StartTelemetryTask`, `StartNavigationTask` ve `StartSafetyTask` döngüleri, kendi çalışma periyotlarında `safety_feed_watchdog()` fonksiyonuyla sistem sağlık bayrağını besler. En yüksek öncelikli güvenlik görevi olan `SafetyTask`, tüm görevlerin son check-in zamanlarını takip eder. Herhangi bir görev kilitlenirse donanımsal IWDG yenilenmez ve STM32 2.0 saniye içinde donanımsal olarak kendini resetler (Premature reset korumalıdır).
-2. **Fiziksel Acil Stop (EXTI Button):**
-   * Bot üzerinde bulunan fiziksel acil stop butonu STM32'nin `PC13` pinine bağlıdır.
-   * Butona basıldığı an donanımsal dış kesme (`EXTI15_10_IRQHandler`) tetiklenir, motor PWM çıkışları (PA6, PA7) anında `1500us` (nötr/stop) seviyesine çekilerek otopilot `MODE_EMERGENCY` modunda kilitlenir.
-3. **Zaman Aşımı Korumaları (Timeout Failsafes):**
-   * **Telemetri Kaybı:** Telefon ile STM32 arasındaki USB bağlantısı koptuğunda veya 500ms'den uzun süre telefon komutu (`MSG_PHONE_COMMANDS`) alınmadığında STM32 motorları kapatır.
-   * **RC Kumanda Bağlantı Kopması:** RC alıcısından gelen sinyal kalitesi (`failsafe` bayrağı) düştüğünde sistem otomatik olarak manuel/otonom moddan çıkıp failsafe durumuna geçer.
-
----
-
-## 🗺️ Versiyonlama ve Protokol Yol Haritası (Roadmap - Madde 6)
-
-Sistem haberleşme protokolü, STM32 (`protocol.h`) ve SBC (`protocol.py`) arasında senkronize edilmiş sürüm kontrolüne sahiptir:
-
-* **Sürüm Kontrolü (Protocol Versioning):** Tüm paket başlıklarında Sync baytlarından hemen sonra 1 baytlık `PROTOCOL_VERSION = 0x01` doğrulaması yapılır. Yanlış protokolle gelen veriler anında elenerek olası veri bozulmaları engellenir.
-* **Geliştirme Yol Haritası:**
-  * `v1.0.0` (Mevcut): Temel otonomi, APF planlayıcı, Çift costmap, GCS kablosuz dinleyici, telemetrik motor PWM geri bildirimi.
-  * `v1.1.0` (Planlanan): Çoklu İDA sürü koordinasyonu için MAVLink mesaj çevirici köprüsü (`mavlink_bridge.py`).
-  * `v1.2.0` (Planlanan): LIDAR / Radar verilerinin costmap katmanına entegre edilmesi ve derinlik sensörüyle sığlık koruması.
+1. **Task-Level Watchdog & IWDG:**
+   * An Independent Watchdog (IWDG) is initialized in hardware.
+   * `StartTelemetryTask`, `StartNavigationTask`, and `StartSafetyTask` must set their health flags within their run loops by calling `safety_feed_watchdog()`.
+   * The high-priority `SafetyTask` monitors task timings. If any task locks or freezes, the hardware IWDG will not be refreshed, triggering a system-wide STM32 hard reset within 2.0 seconds.
+2. **Physical Emergency Stop (PC13 EXTI):**
+   * Connected to the external red E-stop button via pin `PC13`.
+   * Triggering the pin generates an EXTI interrupt (`EXTI15_10_IRQHandler`), instantly locking PWM signals to `1500us` (stop) and transitioning the state machine to `MODE_EMERGENCY`.
+3. **Timeout Failsafes:**
+   * **Telemetry Dropout:** If no `MSG_PHONE_COMMANDS` package is received for >500ms, the autopilot automatically shuts down thruster outputs.
+   * **RC Loss of Signal:** If the RC receiver asserts its failsafe pin, control falls back to autonomous failsafe procedures.
 
 ---
 
-## 💾 STM32 Firmware Güncelleme ve Kurtarma (DFU Guide - Madde 8)
+## 🗺️ Versioning & Protocol Roadmap
 
-STM32F405RGT6 mikrodenetleyicisine yeni firmware yüklemek veya önceki sürüme geri dönmek (rollback) için aşağıdaki yöntemler kullanılabilir:
+The communication interface maintains a synchronized schema version between the STM32 (`protocol.h`) and Python (`protocol.py`):
 
-### Yöntem A: STM32CubeProgrammer ile USB DFU Üzerinden Güncelleme (Önerilen)
-1. Botun elektriğini kapatın.
-2. STM32 kartı üzerindeki `BOOT0` pinini `3.3V` pinine kısa devre yapın (veya BOOT switch'ini ON konumuna alın).
-3. Kartı micro-USB kablosuyla bilgisayara bağlayın. Kart otomatik olarak donanımsal DFU moduna geçecektir.
-4. **STM32CubeProgrammer** yazılımını açın. Sağ üstteki bağlantı türünü **USB** seçip **Connect** butonuna basın.
-5. `STM32/build/aydede.bin` (veya kurtarma dosyası `rollback.bin`) dosyasını seçin.
-6. **Start Programming** butonuna basarak yükleme işlemini tamamlayın.
-7. Yükleme bittiğinde `BOOT0` pinini `GND` konumuna çekip kartı yeniden başlatın.
+* **Protocol Versioning:** Headers include a 1-byte `PROTOCOL_VERSION = 0x01` byte following sync characters. Packets matching incorrect version hashes are immediately dropped.
+* **Feature Roadmap:**
+  * `v1.0.0` (Active): Basic waypoint navigation, APF vectoring, dual occupancy costmaps, GCS listener, and telemetry thruster PWM reporting.
+  * `v1.1.0` (Planned): Multi-vessel swarm coordination using custom MAVLink bridges (`mavlink_bridge.py`).
+  * `v1.2.0` (Planned): LIDAR / Radar raw scan ingestion into local costmap cost matrices.
 
-### Yöntem B: UART/Seri Port (FTDI) Üzerinden Güncelleme
-1. FTDI dönüştürücünün RX pinini STM32 `PA9` (TX1) pinine, TX pinini `PA10` (RX1) pinine bağlayın. GND hatlarını birleştirin.
-2. `BOOT0` pinini `3.3V` yapıp kartı çalıştırın.
-3. STM32CubeProgrammer yazılımında bağlantıyı **UART** seçip ilgili COM portunu ve baudrate'i (örn. 115200) seçerek bağlanın.
-4. Firmware imajını seçerek programlamayı başlatın.
-5. İşlem sonrasında `BOOT0` pinini `GND` yapıp kartı resetleyin.
+---
 
+## 💾 STM32 Firmware Upgrade & Rollback (DFU Guide)
+
+Autopilot firmware flashing can be performed via built-in bootloader pipelines:
+
+### Method A: Flashing over USB DFU Mode (Recommended)
+1. Power down the autopilot board.
+2. Tie the `BOOT0` pin to `3.3V` (or flip the BOOT switch to ON).
+3. Connect the board to your PC via micro-USB. It will boot into DFU mode.
+4. Launch **STM32CubeProgrammer** and change the connection protocol to **USB**. Click **Connect**.
+5. Select the build binary: `STM32/build/aydede.bin` (or a backup `rollback.bin` image).
+6. Click **Start Programming**.
+7. Once finished, disconnect, ground the `BOOT0` pin (set to GND/OFF), and power cycle.
+
+### Method B: Flashing via UART1 FTDI Programmer
+1. Connect FTDI RX to STM32 `PA9` (TX1) and FTDI TX to STM32 `PA10` (RX1). Share common Ground (GND).
+2. Set `BOOT0` to `3.3V` and power up the board.
+3. In STM32CubeProgrammer, select **UART**, choose the target COM port, set baud rate to 115200, and click **Connect**.
+4. Select the target binary and initiate the download.
+5. Ground `BOOT0` and reset the board.
