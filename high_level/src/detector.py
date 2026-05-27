@@ -208,6 +208,15 @@ class BuoyDetector:
                 track["missed_frames"] += 1
                 if track["missed_frames"] <= 3:
                     remaining_tracks.append(track)
+                    # COASTING (Örtbas etme): Eğer daha önce onaylanmış bir izse ve geçici olarak
+                    # görülmüyorsa, son bilinen güvenilir (filtrelenmiş) konumuyla bildirmeye devam et.
+                    if track["confirmed"]:
+                        confirmed_detections.append({
+                            "class": track["class"],
+                            "distance": track["filtered_distance"],
+                            "bearing": track["filtered_bearing"],
+                            "is_coasted": True  # Bunun eski bir veri olduğunu belirten bayrak
+                        })
             else:
                 remaining_tracks.append(track)
                 

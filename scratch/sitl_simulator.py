@@ -14,7 +14,7 @@ logger = logging.getLogger("SITL")
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from high_level.src.costmap import LocalCostmap
-from high_level.src.mission_control import MissionController, STATE_PARKUR1
+from high_level.src.mission_control import MissionController, STATE_PARKUR1, STATE_PARKUR2
 from high_level.src.protocol import pack_stm32_telemetry, unpack_phone_commands
 from high_level.src.planner import gps_to_meters
 
@@ -103,19 +103,26 @@ class IDASimulator:
 
     def get_simulated_gps_imu(self) -> dict:
         lat, lon = self._meters_to_gps(self.x, self.y)
-        # Sensör gürültüsü ekle
-        lat += np.random.normal(0, 0.000002)
-        lon += np.random.normal(0, 0.000002)
-        yaw_noisy = (self.yaw + np.random.normal(0, 0.5)) % 360.0
+        # GERÇEKÇI GPS Gürültüsü: Ucuz GPS modülü ±2m CEP sapması
+        # σ=0.000018° ≈ 2.0m (1° lat ≈ 111km, 0.000018° ≈ 2.0m)
+        lat += np.random.normal(0, 0.000018)
+        lon += np.random.normal(0, 0.000018)
+        yaw_noisy = (self.yaw + np.random.normal(0, 1.5)) % 360.0  # Ucuz IMU: ±1.5° gürültü
+        
+        # Gerçekçi dalga salınımı (basit sinüzoidal)
+        wave_freq = 0.4  # Hz (hafif dalga)
+        t = time.time()
+        roll_sim = 3.0 * math.sin(2 * math.pi * wave_freq * t)  # ±3° roll
+        pitch_sim = 2.0 * math.sin(2 * math.pi * wave_freq * 0.7 * t + 1.0)  # ±2° pitch (farklı faz)
         
         return {
             "lat": lat,
             "lon": lon,
-            "sog": self.speed + np.random.normal(0, 0.05),
+            "sog": self.speed + np.random.normal(0, 0.1),
             "cog": self.yaw,
             "gps_lock": 1,
-            "roll": 0.0,
-            "pitch": 0.0,
+            "roll": roll_sim,
+            "pitch": pitch_sim,
             "yaw": yaw_noisy,
             "roll_rate": 0.0,
             "pitch_rate": 0.0,
@@ -144,12 +151,21 @@ class IDASimulator:
             while bearing_deg < -180.0: bearing_deg += 360.0
             
             if abs(bearing_deg) <= (camera_fov_deg / 2.0):
-                dist_noisy = dist + np.random.normal(0, 0.1)
-                bearing_rad_noisy = math.radians(bearing_deg + np.random.normal(0, 0.8))
+                # GERÇEKÇI KAMERA: %12 rastgele kayıp (algılama kaçırma)
+                if np.random.random() < 0.12:
+                    continue  # Bu frame'de bu dubayı algılayamadık
+                
+                # Gerçekçi mesafe gürültüsü: piksel tabanlı ölçüm ±0.5m (uzakta daha kötü)
+                dist_noise_sigma = 0.15 + 0.04 * dist  # Mesafe arttıkça gürültü artar
+                dist_noisy = dist + np.random.normal(0, dist_noise_sigma)
+                
+                # Gerçekçi açı gürültüsü: ±2.5° (bbox jitter)
+                bearing_noise_sigma = 1.0 + 0.15 * dist
+                bearing_rad_noisy = math.radians(bearing_deg + np.random.normal(0, bearing_noise_sigma))
                 
                 detections.append({
                     "class": buoy["class"],
-                    "distance": dist_noisy,
+                    "distance": max(0.3, dist_noisy),  # Negatif mesafe koruması
                     "bearing": bearing_rad_noisy,
                     "bbox": [100, 100, 30, 45]
                 })
@@ -354,6 +370,10 @@ def run_simulation():
     dt = 0.04 
     logger.info("SITL Simülatörü Başlatılıyor. Çıkış için pencere üzerindeyken 'q' tuşuna basın.")
     
+    trajectory = []  # Bot iz takip listesi
+    gate_pass_count = 0
+    last_wp_idx = 0
+    
     while True:
         sim.step(dt)
         
@@ -362,6 +382,17 @@ def run_simulation():
         
         detections = sim.get_simulated_camera_detections()
         mission.process_step(detections, costmap)
+        
+        # Trajectory (iz) kaydet
+        trajectory.append((sim.x, sim.y))
+        if len(trajectory) > 5000:
+            trajectory.pop(0)
+        
+        # Gate geçiş sayacı
+        if mission.current_wp_idx > last_wp_idx:
+            if mission.state == STATE_PARKUR1:
+                gate_pass_count += 1
+            last_wp_idx = mission.current_wp_idx
         
         canvas = np.zeros((win_size, win_size, 3), dtype=np.uint8)
         
@@ -374,6 +405,33 @@ def run_simulation():
             screen_x = int(center_offset + wx * scale)
             screen_y = int(center_offset - wy * scale)
             return screen_x, screen_y
+        
+        # Kapı orta hat çizgileri (Gate midlines - yeşil kesikli çizgiler)
+        gate_buoy_pairs = [
+            (0, 1),  # Kapı 1: buoys[0] ve buoys[1]
+            (2, 3),  # Kapı 2: buoys[2] ve buoys[3]
+            (4, 5),  # Kapı 3: buoys[4] ve buoys[5]
+            (6, 7),  # Kapı 4: buoys[6] ve buoys[7]
+        ]
+        for idx_a, idx_b in gate_buoy_pairs:
+            ba = sim.buoys[idx_a]
+            bb = sim.buoys[idx_b]
+            sa = to_screen(ba["x"], ba["y"])
+            sb = to_screen(bb["x"], bb["y"])
+            # Kapı çizgisi (dubalar arası)
+            cv2.line(canvas, sa, sb, (0, 80, 0), 1, cv2.LINE_AA)
+            # Orta nokta
+            mid_sx = (sa[0] + sb[0]) // 2
+            mid_sy = (sa[1] + sb[1]) // 2
+            cv2.circle(canvas, (mid_sx, mid_sy), 3, (0, 200, 0), -1, cv2.LINE_AA)
+        
+        # Trajectory iz çiz (koyu mavi → parlak mavi gradient)
+        for i in range(1, len(trajectory)):
+            alpha = i / len(trajectory)
+            color = (int(120 * alpha), int(80 * alpha), int(30 + 200 * alpha))
+            pt1 = to_screen(trajectory[i-1][0], trajectory[i-1][1])
+            pt2 = to_screen(trajectory[i][0], trajectory[i][1])
+            cv2.line(canvas, pt1, pt2, color, 1, cv2.LINE_AA)
             
         for buoy in sim.buoys:
             sx, sy = to_screen(buoy["x"], buoy["y"])
@@ -405,6 +463,11 @@ def run_simulation():
         for idx, gps_wp in enumerate(all_wps):
             dx, dy = gps_to_meters(sim.REF_LAT, sim.REF_LON, gps_wp[0], gps_wp[1])
             sx, sy = to_screen(dx, dy)
+            # Aktif waypoint'i farklı renkle göster
+            if mission.state == STATE_PARKUR1 and idx == mission.current_wp_idx:
+                cv2.circle(canvas, (sx, sy), 8, (0, 255, 255), 2, cv2.LINE_AA)
+            elif mission.state == STATE_PARKUR2 and idx == len(sim.p1_gps) + mission.current_wp_idx:
+                cv2.circle(canvas, (sx, sy), 8, (0, 255, 255), 2, cv2.LINE_AA)
             cv2.circle(canvas, (sx, sy), 4, (180, 180, 180), -1, cv2.LINE_AA)
             cv2.putText(canvas, f"WP{idx}", (sx+8, sy+5), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 150, 150), 1, cv2.LINE_AA)
@@ -422,6 +485,18 @@ def run_simulation():
         
         cv2.drawContours(canvas, [np.array([p1, p2, p3])], 0, (0, 255, 0), -1, cv2.LINE_AA)
         
+        # APF kuvvet vektörü görselleştirme (kırmızı ok)
+        rep_x, rep_y = costmap.get_obstacle_forces()
+        force_scale = 20.0  # Kuvvet vektörünü piksel cinsine çevirmek için ölçek
+        if abs(rep_x) > 0.01 or abs(rep_y) > 0.01:
+            # Body-frame kuvvetini world-frame'e çevir
+            fx_world = rep_x * math.cos(yaw_rad) - rep_y * math.sin(yaw_rad)
+            fy_world = rep_x * math.sin(yaw_rad) + rep_y * math.cos(yaw_rad)
+            force_end_x = int(bx + fx_world * force_scale)
+            force_end_y = int(by - fy_world * force_scale)
+            cv2.arrowedLine(canvas, (bx, by), (force_end_x, force_end_y), 
+                           (0, 0, 255), 2, tipLength=0.3, line_type=cv2.LINE_AA)
+        
         # Dinamik vektör göstergelerini sağ alt köşeye yerleştir
         draw_vector_indicator(canvas, 670, 715, sim.current_angle, sim.current_speed, "Akinti (Water)", (0, 150, 255))
         draw_vector_indicator(canvas, 755, 715, sim.wind_angle, sim.wind_speed, "Ruzgar (Wind)", (0, 255, 120))
@@ -437,7 +512,9 @@ def run_simulation():
             f"Yaw: {sim.yaw:.1f} deg",
             f"Speed: {sim.speed:.2f} m/s",
             f"Motor L: {sim.left_motor:.2f}, R: {sim.right_motor:.2f}",
-            f"Active WP Index: {mission.current_wp_idx}"
+            f"Active WP Index: {mission.current_wp_idx}",
+            f"Gates Passed: {gate_pass_count}/4",
+            f"APF Force: ({rep_x:.2f}, {rep_y:.2f})"
         ]
         for offset, text in enumerate(info):
             cv2.putText(canvas, text, (20, 30 + offset * 22), 
@@ -451,3 +528,4 @@ def run_simulation():
 
 if __name__ == "__main__":
     run_simulation()
+

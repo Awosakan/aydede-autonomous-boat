@@ -61,14 +61,28 @@ class APFPlanner:
             return 0.0, current_yaw_deg, current_wp_idx, True
             
         # Ucuz GPS gürültüsünü sönümlemek için konum verisini hareketli ortalamayla filtrele
+        # 15 karelik pencere (yaklaşık 0.6 sn) 2 metrelik ani sapmaları çok daha iyi emer
+        if not hasattr(self, 'filtered_lat_ema'):
+            self.filtered_lat_ema = current_lat
+            self.filtered_lon_ema = current_lon
+            self.gps_filter_size = 15
+            
         self.gps_history_lat.append(current_lat)
         self.gps_history_lon.append(current_lon)
         if len(self.gps_history_lat) > self.gps_filter_size:
             self.gps_history_lat.pop(0)
             self.gps_history_lon.pop(0)
             
-        filtered_lat = sum(self.gps_history_lat) / len(self.gps_history_lat)
-        filtered_lon = sum(self.gps_history_lon) / len(self.gps_history_lon)
+        avg_lat = sum(self.gps_history_lat) / len(self.gps_history_lat)
+        avg_lon = sum(self.gps_history_lon) / len(self.gps_history_lon)
+        
+        # EMA + Hareketli Ortalama hibrit filtre (Gürültüyü çok iyi keser)
+        alpha_gps = 0.3
+        self.filtered_lat_ema = alpha_gps * avg_lat + (1 - alpha_gps) * self.filtered_lat_ema
+        self.filtered_lon_ema = alpha_gps * avg_lon + (1 - alpha_gps) * self.filtered_lon_ema
+        
+        filtered_lat = self.filtered_lat_ema
+        filtered_lon = self.filtered_lon_ema
 
         target_lat, target_lon = waypoints[current_wp_idx]
         

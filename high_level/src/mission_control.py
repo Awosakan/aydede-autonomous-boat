@@ -551,6 +551,11 @@ class MissionController:
         self.state = new_state
         self.state_enter_time = time.time()
         
+        # DURUM GEÇİŞLERİNDE İLK DEĞER SIFIRLAMALARI
+        if new_state in [STATE_PARKUR1, STATE_PARKUR2]:
+            self.current_wp_idx = 0
+            self.planner.last_target_heading = None
+            
         # Kamikaze moduna girişte hedef kaybı zamanlayıcısını sıfırla
         if new_state == STATE_PARKUR3:
             self.last_target_time = time.time()

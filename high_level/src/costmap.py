@@ -104,7 +104,14 @@ class LocalCostmap:
             if 0 <= row < self.grid_size and 0 <= col < self.grid_size:
                 if cls == "orange_gate":
                     self.grid_gates[row, col] = 100
+                    # Kapı dubaları için SABİT ve KÜÇÜK şişirme yarıçapı kullanılır (max 0.8m = 3 hücre).
+                    # Büyük dinamik şişirme iki dubayı tek kümeye birleştirir ve koridor
+                    # algoritmasını kırar. Bu gerçek suda en büyük risk.
+                    gate_inflation_cells = min(self.inflation_radius_cells, int(0.8 / self.resolution))
+                    saved_cells = self.inflation_radius_cells
+                    self.inflation_radius_cells = gate_inflation_cells
                     self._inflate_obstacle(self.grid_gates, row, col)
+                    self.inflation_radius_cells = saved_cells
                 else:
                     # Sarı dubalar ve diğer hedefler engel kabul edilir
                     self.grid_obstacles[row, col] = 100
@@ -127,44 +134,158 @@ class LocalCostmap:
                         current_cost = target_grid[target_row, target_col]
                         target_grid[target_row, target_col] = max(current_cost, cost)
 
+    def _cluster_gate_posts(self) -> list:
+        """
+        Kapı katmanındaki yüksek maliyetli hücreleri kümelere ayırarak
+        her bir duba merkezinin (centroid) body-frame koordinatlarını döndürür.
+        Basit flood-fill (bağlı bileşenler) ile kümeleme yapılır.
+        """
+        rows_g, cols_g = np.where(self.grid_gates > 50)  # Yalnızca güçlü tespitler
+        if len(rows_g) == 0:
+            return []
+        
+        visited = set()
+        centroids = []
+        
+        for i in range(len(rows_g)):
+            r0, c0 = int(rows_g[i]), int(cols_g[i])
+            if (r0, c0) in visited:
+                continue
+            
+            # BFS ile bağlı bileşeni bul
+            cluster = []
+            queue = [(r0, c0)]
+            visited.add((r0, c0))
+            
+            while queue:
+                r, c = queue.pop(0)
+                cluster.append((r, c))
+                
+                # 8-komşuluk (3x3 pencere)
+                for dr in [-1, 0, 1]:
+                    for dc in [-1, 0, 1]:
+                        nr, nc = r + dr, c + dc
+                        if (nr, nc) not in visited and 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
+                            if self.grid_gates[nr, nc] > 50:
+                                visited.add((nr, nc))
+                                queue.append((nr, nc))
+            
+            # Küme centroid'ini ağırlıklı ortalama ile hesapla
+            total_weight = 0.0
+            cx_sum = 0.0
+            cy_sum = 0.0
+            for r, c in cluster:
+                w = float(self.grid_gates[r, c])
+                dx_m = (self.center_idx - r) * self.resolution
+                dy_m = (c - self.center_idx) * self.resolution
+                cx_sum += dx_m * w
+                cy_sum += dy_m * w
+                total_weight += w
+            
+            if total_weight > 0:
+                centroids.append((cx_sum / total_weight, cy_sum / total_weight))
+        
+        return centroids
+
+    def _pair_gate_posts(self, centroids: list) -> list:
+        """
+        Duba merkezlerini kapı çiftlerine ayırır.
+        Birbirine en yakın çiftleri eşleştirir (1.5m - 6.0m arası mesafe).
+        Döndürdüğü her çift: ((dx1, dy1), (dx2, dy2)) şeklindedir.
+        """
+        if len(centroids) < 2:
+            return []
+        
+        used = set()
+        pairs = []
+        
+        # Tüm olası çiftleri mesafe sırasına göre değerlendir
+        candidates = []
+        for i in range(len(centroids)):
+            for j in range(i + 1, len(centroids)):
+                dx = centroids[i][0] - centroids[j][0]
+                dy = centroids[i][1] - centroids[j][1]
+                dist = math.sqrt(dx**2 + dy**2)
+                if 1.5 <= dist <= 6.0:  # Kapı genişliği aralığı (fiziksel sınır)
+                    candidates.append((dist, i, j))
+        
+        candidates.sort(key=lambda x: x[0])
+        
+        for _, i, j in candidates:
+            if i not in used and j not in used:
+                used.add(i)
+                used.add(j)
+                pairs.append((centroids[i], centroids[j]))
+        
+        return pairs
+
     def get_obstacle_forces(self) -> tuple:
         """
         Yapay Potansiyel Alanlar (APF) için bileşke itici kuvveti hesaplar.
-        - Kapı dubaları için tam simetrik itme (orta hattı korur).
-        - Engeller için asimetrik (sağa kaçış) itme uygular.
-        - Kıyı sınırı mantığı ile sağ taraf engelli ise asimetrik sağ büküm devre dışı bırakılır (Görev 2.3).
+        
+        KAPI DUBA STRATEJİSİ (Gate Corridor Navigation):
+        İki kapı dubası arasından geçiş için "duvar etkisi" (wall effect) yerine 
+        "koridor orta hat" (corridor midline) yaklaşımı kullanılır:
+        1. Kapı hücrelerini kümelere ayırarak duba merkezlerini bul.
+        2. Yakın dubaları çift eşleştirerek kapı tanımla.
+        3. Kapının orta noktasından geçen eksene dik YANAL düzeltme kuvveti uygula.
+           → İleri/geri itme YOK, sadece yanal (lateral) koridor düzeltmesi.
+           → Planlayıcının çekici kuvveti botu kapıdan ileriye çeker.
+        
+        Eşleşmeyen tekli dubalar için güvenlik amaçlı hafif itme uygulanır.
+        
+        ENGEL STRATEJİSİ:
+        - COLREGs kurallarına uygun asimetrik (sağa kaçış) itme uygular.
+        - Kıyı sınırı mantığı ile sağ taraf engelli ise asimetrik büküm devre dışı bırakılır.
         """
         rep_x = 0.0
         rep_y = 0.0
         
         K_repulsive = 5.0
-        influence_distance_gates = 2.5
         influence_distance_obstacles = 5.0
         
         # Sağ tarafın engel durumu (Görev 2.3)
         right_blocked = self.is_right_blocked(max_dist_m=6.0)
         
-        # 1. Kapı Dubaları (Orange Gates) İtme Hesabı (Simetrik - Dubaların Ortasından Geçiş Sağlar)
-        # O(N^2) tam ızgara taraması yerine sadece maliyeti min_cost_threshold'dan büyük hücreleri NumPy ile bulup döngüye sokuyoruz (C6 optimizasyonu)
-        rows_g, cols_g = np.where(self.grid_gates > self.min_cost_threshold)
-        for r, c in zip(rows_g, cols_g):
-            cost = self.grid_gates[r, c]
-            dx_m = (self.center_idx - r) * self.resolution
-            dy_m = (c - self.center_idx) * self.resolution
-            dist = math.sqrt(dx_m**2 + dy_m**2)
-            if dist < 0.1: continue
+        # ==========================================
+        # 1. KAPI DUBA KORİDOR KUVVETLERİ
+        # ==========================================
+        centroids = self._cluster_gate_posts()
+        gate_pairs = self._pair_gate_posts(centroids)
+        paired_centroids = set()
+        
+        K_corridor = 4.0        # Koridor yanal düzeltme kazancı
+        corridor_influence = 5.0  # Koridor etkileşim mesafesi (m)
+        
+        for (post_a, post_b) in gate_pairs:
+            paired_centroids.add(post_a)
+            paired_centroids.add(post_b)
             
-            if dist <= influence_distance_gates:
-                force_mag = K_repulsive * (cost / 100.0) * ((1.0 / dist) - (1.0 / influence_distance_gates)) * (1.0 / dist**2)
-                # APF İtici Kuvvet Sınırsızlığı Koruması (Görev 61)
-                force_mag = min(15.0, force_mag)
-                
-                # Simetrik itme (Botu tam zıt yöne iter, böylece sol ve sağ duba kuvvetleri ortada dengelenir)
-                rep_x += - (dx_m / dist) * force_mag
-                rep_y += - (dy_m / dist) * force_mag
-                        
-        # 2. Sarı Engeller (Yellow Obstacles) İtme Hesabı (Asimetrik COLREGs - Sağa Sancak Kaçışı Sağlar)
-        # O(N^2) tam ızgara taraması yerine sadece maliyeti min_cost_threshold'dan büyük hücreleri NumPy ile bulup döngüye sokuyoruz (C6 optimizasyonu)
+            # Kapı dubaları için uzun mesafeli duvar etkisi (wall effect) İPTAL edildi.
+            # Bunun yerine sadece çarpışmayı önlemek için ÇOK KISA mesafeli (1.2m)
+            # ve yumuşak bir itici kuvvet uygulanır. Yönlendirme işini planlayıcı
+            # (attractive force) yapacaktır.
+            for post in [post_a, post_b]:
+                dist_to_post = math.sqrt(post[0]**2 + post[1]**2)
+                if 0.1 < dist_to_post < 1.2:
+                    # Mesafe azaldıkça artan logaritmik itme (max 3.0)
+                    push_mag = 3.0 * ((1.0 / dist_to_post) - (1.0 / 1.2))
+                    rep_x += -(post[0] / dist_to_post) * push_mag
+                    rep_y += -(post[1] / dist_to_post) * push_mag
+        
+        # Eşleşmeyen tekli dubalar için standart güvenlik itmesi (2.0m etki)
+        for cent in centroids:
+            if cent not in paired_centroids:
+                dist = math.sqrt(cent[0]**2 + cent[1]**2)
+                if 0.1 < dist < 2.0:
+                    force_mag = 3.0 * ((1.0 / dist) - (1.0 / 2.0))
+                    force_mag = min(5.0, force_mag)
+                    rep_x += -(cent[0] / dist) * force_mag
+                    rep_y += -(cent[1] / dist) * force_mag
+        
+        # ==========================================
+        # 2. SARI ENGEL İTİCİ KUVVETLERİ (COLREGs)
+        # ==========================================
         rows_o, cols_o = np.where(self.grid_obstacles > self.min_cost_threshold)
         for r, c in zip(rows_o, cols_o):
             cost = self.grid_obstacles[r, c]
