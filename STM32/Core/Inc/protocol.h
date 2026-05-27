@@ -41,7 +41,7 @@ typedef struct {
     float target_heading;  // degrees (0-360)
 } PhoneCommands_t;
 
-// STM32 Telemetry Struct (54 bytes)
+// STM32 Telemetry Struct (58 bytes)
 typedef struct {
     double lat;
     double lon;
@@ -56,6 +56,8 @@ typedef struct {
     float yaw_rate;
     float battery;
     uint8_t mode;
+    uint16_t left_pwm;
+    uint16_t right_pwm;
 } Telemetry_t;
 
 // PID Tuning Struct (12 bytes)

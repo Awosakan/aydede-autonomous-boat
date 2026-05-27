@@ -63,7 +63,7 @@ class AsyncLoggerManager:
         self.csv_headers = [
             "Timestamp", "Latitude", "Longitude", "Speed", 
             "Roll", "Pitch", "Heading", 
-            "SpeedSetpoint", "HeadingSetpoint"
+            "SpeedSetpoint", "HeadingSetpoint", "LeftPWM", "RightPWM"
         ]
         
         # Video yazıcı bileşenleri
@@ -131,12 +131,12 @@ class AsyncLoggerManager:
 
     def log_telemetry(self, lat: float, lon: float, speed: float, 
                       roll: float, pitch: float, heading: float, 
-                      speed_sp: float, heading_sp: float):
+                      speed_sp: float, heading_sp: float, left_pwm: int = 1500, right_pwm: int = 1500):
         """
         Telemetri verisini kuyruğa ekler (>= 1 Hz çağrılmalıdır).
         """
         timestamp = time.time()
-        data = [timestamp, lat, lon, speed, roll, pitch, heading, speed_sp, heading_sp]
+        data = [timestamp, lat, lon, speed, roll, pitch, heading, speed_sp, heading_sp, left_pwm, right_pwm]
         try:
             self.telemetry_queue.put_nowait(data)
         except queue.Full:

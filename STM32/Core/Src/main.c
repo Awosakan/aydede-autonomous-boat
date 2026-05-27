@@ -38,6 +38,8 @@ uint8_t gps_rx_byte = 0;
 volatile float global_left_thrust = 0.0f;
 volatile float global_right_thrust = 0.0f;
 volatile float global_battery_voltage = 12.0f; // Batarya voltajı (TelemetryTask tarafından güncellenir)
+volatile uint16_t global_left_pwm = 1500;      // Telemetri için sol motor PWM değeri
+volatile uint16_t global_right_pwm = 1500;     // Telemetri için sağ motor PWM değeri
 
 // Fonksiyon Bildirimleri
 void SystemClock_Config(void);
@@ -200,6 +202,8 @@ void StartTelemetryTask(void *argument) {
         telem.yaw_rate = imu.yaw_rate;
         telem.battery = bat;
         telem.mode = current_mode;
+        telem.left_pwm = global_left_pwm;
+        telem.right_pwm = global_right_pwm;
 
         // E. Paketi Seri Port Formatına Dönüştür ve Gönder (SYNC1 + SYNC2 + MsgID + Len + Payload + CRC16)
         tx_packet[0] = SYNC_BYTE_1;
@@ -304,6 +308,10 @@ void StartNavigationTask(void *argument) {
             if (right_pulse > 2000) right_pulse = 2000;
             if (right_pulse < 1000) right_pulse = 1000;
         }
+
+        // Telemetri için değerleri kaydet
+        global_left_pwm = (uint16_t)left_pulse;
+        global_right_pwm = (uint16_t)right_pulse;
 
         __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, left_pulse);
         __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, right_pulse);

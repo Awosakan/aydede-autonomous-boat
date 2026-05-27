@@ -22,6 +22,9 @@
     "max_speed_accel": 0.8,
     "max_yaw_rate": 180.0,
     "usb_log_dir": null,
+    "auto_start_seconds": -1.0,
+    "gcs_udp_port": 12345,
+    "gcs_serial_port": null,
     "yolo_classes": {
         "0": "orange_gate",
         "1": "yellow_obstacle",

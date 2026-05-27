@@ -16,7 +16,7 @@ from src.protocol import IDAParser, MSG_STM32_TELEMETRY, unpack_stm32_telemetry,
 from src.telemetry_logger import AsyncLoggerManager
 from src.detector import BuoyDetector
 from src.costmap import LocalCostmap
-from src.mission_control import MissionController, STATE_PARKUR1
+from src.mission_control import MissionController, STATE_PARKUR1, STATE_FAILSAFE, STATE_RETURN
 
 # Logger Setup
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s")
@@ -131,6 +131,116 @@ class YOLOInferenceWorker(threading.Thread):
         self.running = False
 
 
+class GCSListener(threading.Thread):
+    """
+    Asenkron GCS Komut Dinleyici.
+    Hem UDP soketini hem de (eğer yapılandırılmışsa) GCS seri portunu dinleyerek
+    otonomiyi başlatıp durduracak, hedef rengi çalışma zamanında güncelleyecek ASCII komutları ayrıştırır.
+    """
+    def __init__(self, node):
+        super().__init__(daemon=True)
+        self.node = node
+        self.running = False
+        self.udp_sock = None
+        self.gcs_ser = None
+
+    def run(self):
+        self.running = True
+        udp_port = self.node.config.get("gcs_udp_port", 12345)
+        gcs_serial_port = self.node.node_gcs_serial_port if hasattr(self.node, "node_gcs_serial_port") else self.node.config.get("gcs_serial_port", None)
+        
+        # Setup UDP socket
+        if udp_port:
+            import socket
+            try:
+                self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                # Bind to all interfaces
+                self.udp_sock.bind(("0.0.0.0", udp_port))
+                self.udp_sock.settimeout(0.5)
+                logger.info(f"GCS UDP Dinleyici başlatıldı: port {udp_port}")
+            except Exception as e:
+                logger.error(f"GCS UDP soket oluşturma hatası: {e}")
+                self.udp_sock = None
+
+        # Setup Serial port if configured
+        if gcs_serial_port:
+            try:
+                self.gcs_ser = serial.Serial(gcs_serial_port, 57600, timeout=0.5) # Sik Telemetry Radios typically run at 57600
+                logger.info(f"GCS Seri Dinleyici başlatıldı: port {gcs_serial_port}")
+            except Exception as e:
+                logger.error(f"GCS Seri port açma hatası ({gcs_serial_port}): {e}")
+                self.gcs_ser = None
+
+        while self.running:
+            # Check UDP socket
+            if self.udp_sock:
+                try:
+                    data, addr = self.udp_sock.recvfrom(1024)
+                    if data:
+                        cmd = data.decode("utf-8").strip()
+                        logger.info(f"UDP GCS komutu alındı: '{cmd}' ({addr[0]}:{addr[1]})")
+                        self.process_command(cmd)
+                except socket.timeout:
+                    pass
+                except Exception as e:
+                    logger.error(f"UDP GCS okuma hatası: {e}")
+
+            # Check Serial port
+            if self.gcs_ser:
+                try:
+                    if self.gcs_ser.in_waiting > 0:
+                        data = self.gcs_ser.readline()
+                        if data:
+                            cmd = data.decode("utf-8", errors="ignore").strip()
+                            logger.info(f"Seri GCS komutu alındı: '{cmd}'")
+                            self.process_command(cmd)
+                except Exception as e:
+                    logger.error(f"Seri GCS okuma hatası: {e}")
+            
+            time.sleep(0.05)
+
+    def process_command(self, cmd_str: str):
+        # Parse command string
+        parts = cmd_str.split(":")
+        cmd = parts[0].upper().strip()
+        
+        if cmd == "START":
+            logger.info("GCS: START komutu alındı. Otonomi başlatılıyor.")
+            self.node.mission.transition_to(STATE_PARKUR1)
+        elif cmd == "STOP":
+            logger.warning("GCS: STOP komutu alındı. Failsafe moduna geçiliyor.")
+            self.node.mission.transition_to(STATE_FAILSAFE)
+        elif cmd == "RETURN":
+            logger.info("GCS: RETURN komutu alındı. Eve dönüş başlatılıyor.")
+            self.node.mission.transition_to(STATE_RETURN)
+        elif cmd == "COLOR":
+            if len(parts) > 1:
+                color_val = parts[1].lower().strip()
+                if color_val in ["red", "green", "blue"]:
+                    color_class = f"target_{color_val}"
+                    logger.info(f"GCS: Hedef renk güncellemesi alındı: {color_class}")
+                    self.node.mission.target_color = color_class
+                    # Update config dict so it's consistent
+                    self.node.config["target_color"] = color_class
+                else:
+                    logger.warning(f"GCS: Geçersiz renk değeri: {color_val}")
+            else:
+                logger.warning("GCS: Renk belirtilmedi")
+
+    def stop(self):
+        self.running = False
+        if self.udp_sock:
+            try:
+                self.udp_sock.close()
+            except:
+                pass
+        if self.gcs_ser:
+            try:
+                self.gcs_ser.close()
+            except:
+                pass
+
+
 class IDANode:
     def __init__(self, serial_port: str = "/dev/ttyACM0", baudrate: int = 115200, 
                  model_path: str = None, video_source=0):
@@ -168,6 +278,9 @@ class IDANode:
             "max_speed_accel": 0.8,
             "max_yaw_rate": 180.0,
             "usb_log_dir": None,
+            "auto_start_seconds": -1.0,
+            "gcs_udp_port": 12345,
+            "gcs_serial_port": None,
             "yolo_classes": {
                 "0": "orange_gate",
                 "1": "yellow_obstacle",
@@ -370,6 +483,10 @@ class IDANode:
         self.hb_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self.hb_thread.start()
         
+        # 3.5. GCS Dinleyiciyi Başlat
+        self.gcs_listener = GCSListener(self)
+        self.gcs_listener.start()
+        
         # 4. Kamera Başlatılması
         cap = cv2.VideoCapture(self.video_source)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -417,8 +534,8 @@ class IDANode:
         # Otonomi Döngüsü (24 FPS Kontrol)
         frame_time = 1.0 / 24.0
         
-        # Test amaçlı otomatik göreve başlama komutu (Normalde YKİ'den veya RC'den gelir)
-        # 3 saniye sonra otomatik Parkur 1'i başlatalım
+        # Otomatik göreve başlama kontrolü
+        auto_start_seconds = self.config.get("auto_start_seconds", -1.0)
         start_time = time.time()
         auto_started = False
         
@@ -482,9 +599,9 @@ class IDANode:
                     }
                     self.mission.update_telemetry(mock_telemetry)
                 
-                # Test/Simülasyon başlatma tetiği
-                if not auto_started and (loop_start - start_time > 3.0):
-                    logger.info("Otonom Görev Tetiklendi!")
+                # Otomatik göreve başlama tetiği (auto_start_seconds > 0 ise)
+                if not auto_started and auto_start_seconds > 0.0 and (loop_start - start_time > auto_start_seconds):
+                    logger.info(f"Otomatik otonom görev başlatılıyor ({auto_start_seconds} saniye sonra)...")
                     self.mission.transition_to(STATE_PARKUR1)
                     auto_started = True
                 
@@ -605,6 +722,14 @@ class IDANode:
         # Logları kapat
         self.logger_manager.stop()
         
+        # GCS Dinleyiciyi durdur
+        if hasattr(self, "gcs_listener") and self.gcs_listener is not None:
+            self.gcs_listener.stop()
+            try:
+                self.gcs_listener.join(timeout=1.0)
+            except Exception as e:
+                logger.error(f"GCS dinleyici thread join hatası: {e}")
+
         # Seri okuma ve heartbeat threadlerini durdur (D6 düzeltmesi)
         if hasattr(self, "read_thread") and self.read_thread.is_alive():
             self.read_thread.join(timeout=1.0)

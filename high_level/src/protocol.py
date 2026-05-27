@@ -165,17 +165,19 @@ def unpack_phone_commands(payload: bytes) -> tuple:
 
 def pack_stm32_telemetry(lat: float, lon: float, sog: float, cog: float, gps_lock: int,
                          roll: float, pitch: float, yaw: float, roll_rate: float, 
-                         pitch_rate: float, yaw_rate: float, battery: float, mode: int) -> bytes:
+                         pitch_rate: float, yaw_rate: float, battery: float, mode: int,
+                         left_pwm: int, right_pwm: int) -> bytes:
     """
     STM32'den telefona gönderilen kritik sensör verileri.
     """
-    return struct.pack("<ddffBfffffffB", lat, lon, sog, cog, gps_lock, 
-                       roll, pitch, yaw, roll_rate, pitch_rate, yaw_rate, battery, mode)
+    return struct.pack("<ddffBfffffffBHH", lat, lon, sog, cog, gps_lock, 
+                       roll, pitch, yaw, roll_rate, pitch_rate, yaw_rate, battery, mode,
+                       left_pwm, right_pwm)
 
 def unpack_stm32_telemetry(payload: bytes) -> dict:
-    if len(payload) != 54:  # 8+8+4+4+1+4+4+4+4+4+4+4+1 = 54 bytes
-        raise ValueError(f"Invalid telemetry size: {len(payload)} (expected 54)")
-    data = struct.unpack("<ddffBfffffffB", payload)
+    if len(payload) != 58:  # 8+8+4+4+1+4+4+4+4+4+4+4+1+2+2 = 58 bytes
+        raise ValueError(f"Invalid telemetry size: {len(payload)} (expected 58)")
+    data = struct.unpack("<ddffBfffffffBHH", payload)
     return {
         "lat": data[0],
         "lon": data[1],
@@ -189,7 +191,9 @@ def unpack_stm32_telemetry(payload: bytes) -> dict:
         "pitch_rate": data[9],
         "yaw_rate": data[10],
         "battery": data[11],
-        "mode": data[12]
+        "mode": data[12],
+        "left_pwm": data[13],
+        "right_pwm": data[14]
     }
 
 def pack_pid_tuning(kp: float, ki: float, kd: float) -> bytes:

@@ -103,6 +103,10 @@ class MissionController:
         self.last_target_absolute_heading = 0.0
         self.kamikaze_lock_time = 0.0
         self.kamikaze_hit_detected = False
+        
+        # Telemetri Motor PWM Değerleri
+        self.current_left_pwm = 1500
+        self.current_right_pwm = 1500
 
         # Kamikaze son bilinen hedef konumu (B2 düzeltmesi)
         self.last_target_gps = None
@@ -118,6 +122,8 @@ class MissionController:
             self.gps_lock = telemetry["gps_lock"]
             self.battery_voltage = telemetry.get("battery_voltage", telemetry.get("battery", 12.0))
             self.stm32_mode = telemetry.get("mode", MODE_IDLE)
+            self.current_left_pwm = telemetry.get("left_pwm", 1500)
+            self.current_right_pwm = telemetry.get("right_pwm", 1500)
             self.last_telemetry_time = time.time()
             self.telemetry_received = True
 
@@ -484,7 +490,8 @@ class MissionController:
         self.logger_manager.log_telemetry(
             curr_lat, curr_lon, curr_speed,
             self.current_roll, self.current_pitch, curr_yaw,
-            target_speed, target_heading
+            target_speed, target_heading,
+            self.current_left_pwm, self.current_right_pwm
         )
         # D4: Costmap logunu 4Hz'e d\u00fc\u015f\u00fcr (her 6 karede bir)
         if not hasattr(self, '_costmap_log_counter'):
@@ -521,7 +528,8 @@ class MissionController:
             self.logger_manager.log_telemetry(
                 curr_lat, curr_lon, curr_speed,
                 roll, pitch, curr_yaw,
-                0.0, curr_yaw
+                0.0, curr_yaw,
+                self.current_left_pwm, self.current_right_pwm
             )
             
             # Yer Kontrol İstasyonuna (konsol ve log dosyası üzerinden) acil durum telemetrisi yayınla
