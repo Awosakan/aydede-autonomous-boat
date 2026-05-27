@@ -145,8 +145,8 @@ class LocalCostmap:
         right_blocked = self.is_right_blocked(max_dist_m=6.0)
         
         # 1. Kapı Dubaları (Orange Gates) İtme Hesabı (Simetrik - Dubaların Ortasından Geçiş Sağlar)
-        # O(N^2) tam ızgara taraması yerine sadece maliyeti 30'dan büyük hücreleri NumPy ile bulup döngüye sokuyoruz (C6 optimizasyonu)
-        rows_g, cols_g = np.where(self.grid_gates > 30)
+        # O(N^2) tam ızgara taraması yerine sadece maliyeti min_cost_threshold'dan büyük hücreleri NumPy ile bulup döngüye sokuyoruz (C6 optimizasyonu)
+        rows_g, cols_g = np.where(self.grid_gates > self.min_cost_threshold)
         for r, c in zip(rows_g, cols_g):
             cost = self.grid_gates[r, c]
             dx_m = (self.center_idx - r) * self.resolution
@@ -164,8 +164,8 @@ class LocalCostmap:
                 rep_y += - (dy_m / dist) * force_mag
                         
         # 2. Sarı Engeller (Yellow Obstacles) İtme Hesabı (Asimetrik COLREGs - Sağa Sancak Kaçışı Sağlar)
-        # O(N^2) tam ızgara taraması yerine sadece maliyeti 30'dan büyük hücreleri NumPy ile bulup döngüye sokuyoruz (C6 optimizasyonu)
-        rows_o, cols_o = np.where(self.grid_obstacles > 30)
+        # O(N^2) tam ızgara taraması yerine sadece maliyeti min_cost_threshold'dan büyük hücreleri NumPy ile bulup döngüye sokuyoruz (C6 optimizasyonu)
+        rows_o, cols_o = np.where(self.grid_obstacles > self.min_cost_threshold)
         for r, c in zip(rows_o, cols_o):
             cost = self.grid_obstacles[r, c]
             dx_m = (self.center_idx - r) * self.resolution

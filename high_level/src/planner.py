@@ -77,16 +77,20 @@ class APFPlanner:
         dist_to_wp = math.sqrt(dx_m**2 + dy_m**2)
 
         # Rota hedefinin costmap üzerindeki hücresinin maliyetini kontrol et (Görev 108)
-        # Eğer hedef engel altındaysa, İDA'nın engele çarpmadan devam edebilmesi için toleransı geçici olarak genişlet.
-        wp_row = costmap.center_idx - int(dy_m / costmap.resolution) if hasattr(costmap, "center_idx") else -1
-        wp_col = costmap.center_idx + int(dx_m / costmap.resolution) if hasattr(costmap, "center_idx") else -1
+        # Hedefin İDA'ya göre bağıl body-frame koordinatlarını hesapla (Görev 2.6 ile uyumlu)
+        yaw_rad = math.radians(current_yaw_deg)
+        x_body_raw = dx_m * math.sin(yaw_rad) + dy_m * math.cos(yaw_rad)
+        y_body_raw = dx_m * math.cos(yaw_rad) - dy_m * math.sin(yaw_rad)
+        
+        wp_row = costmap.center_idx - int(x_body_raw / costmap.resolution) if hasattr(costmap, "center_idx") else -1
+        wp_col = costmap.center_idx + int(y_body_raw / costmap.resolution) if hasattr(costmap, "center_idx") else -1
         
         active_tolerance = self.waypoint_tolerance_m
-        if hasattr(costmap, "grid") and 0 <= wp_row < costmap.grid_size and 0 <= wp_col < costmap.grid_size:
-            wp_cost = costmap.grid[wp_row, wp_col]
+        if hasattr(costmap, "grid_obstacles") and 0 <= wp_row < costmap.grid_size and 0 <= wp_col < costmap.grid_size:
+            wp_cost = costmap.grid_obstacles[wp_row, wp_col]
             if wp_cost > 45: # Hedef duba/engel üzerinde veya çok yakınında
                 active_tolerance = max(active_tolerance, 2.2) # Toleransı 2.2 metreye genişlet
-                logger.warning(f"Hedef yol noktası ({target_lat}, {target_lon}) engel bölgesinde (maliyet={wp_cost})! Geçiş toleransı {active_tolerance:.1f}m yapıldı.")
+                logger.warning(f"Hedef yol noktası ({target_lat}, {target_lon}) sarı engel bölgesinde (maliyet={wp_cost})! Geçiş toleransı {active_tolerance:.1f}m yapıldı.")
 
         # Noktaya ulaşıldı mı kontrolü
         reached = False
