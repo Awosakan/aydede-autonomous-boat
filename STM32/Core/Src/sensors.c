@@ -318,6 +318,12 @@ static void parse_nmea_sentence(const char *sentence) {
             float parsed_speed = atof(speed_knots) * 0.514444f; // knots -> m/s çevrim
             float parsed_cog = atof(course_deg);
             
+            // GPS Veri Aralığı Kontrolü (Görev 8: Bounds Check)
+            if (parsed_lat < -90.0 || parsed_lat > 90.0 || parsed_lon < -180.0 || parsed_lon > 180.0 || parsed_speed < 0.0f || parsed_speed > 30.0f) {
+                gps_data.gps_lock = 0;
+                return;
+            }
+            
             uint32_t now_ms = HAL_GetTick();
             
             // GPS Outlier Sıçrama Filtresi (Kötü Senaryo 1):

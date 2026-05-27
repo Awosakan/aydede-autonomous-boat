@@ -134,7 +134,7 @@ void StartTelemetryTask(void *argument) {
                 // Paket başarıyla doğrulandı (MsgID & CRC16 OK)
                 safety_feed_watchdog(); // Watchdog'u besle
                 
-                if (serial_parser.msg_id == MSG_PHONE_COMMANDS) {
+                if (serial_parser.msg_id == MSG_PHONE_COMMANDS && serial_parser.payload_len == sizeof(PhoneCommands_t)) {
                     PhoneCommands_t cmd;
                     memcpy(&cmd, serial_parser.payload, sizeof(PhoneCommands_t));
                     
@@ -154,14 +154,14 @@ void StartTelemetryTask(void *argument) {
                         taskEXIT_CRITICAL();
                     }
                 } 
-                else if (serial_parser.msg_id == MSG_HEARTBEAT) {
+                else if (serial_parser.msg_id == MSG_HEARTBEAT && serial_parser.payload_len == sizeof(Heartbeat_t)) {
                     Heartbeat_t hb;
                     memcpy(&hb, serial_parser.payload, sizeof(Heartbeat_t));
                     
                     // Telefonun otonom mod isteğine göre modu güncelle
                     safety_set_mode(hb.mode);
                 }
-                else if (serial_parser.msg_id == MSG_PID_TUNING) {
+                else if (serial_parser.msg_id == MSG_PID_TUNING && serial_parser.payload_len == sizeof(PIDTuning_t)) {
                     PIDTuning_t pid;
                     memcpy(&pid, serial_parser.payload, sizeof(PIDTuning_t));
                     
