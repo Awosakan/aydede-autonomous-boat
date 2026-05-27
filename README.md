@@ -159,3 +159,54 @@ python scratch/sitl_simulator.py
 4. Chroot ortamına manuel girmek veya donanımları bağlamak için:
    * Donanımları bağlamak için: `su -c "sh /data/data/com.termux/files/home/aydede/phone_assets/chroot_mount.sh mount"`
    * Chroot'a girmek için: `su -c "chroot /data/local/ubuntu /bin/bash"`
+
+---
+
+## 🛡️ STM32 Sağlık ve Emniyet Yönetimi (Safety Management - Madde 3)
+
+İDA'nın fiziksel emniyeti ve sistem bütünlüğü, STM32 otopilotu üzerinde çalışan katmanlı donanım/yazılım korumalarıyla güvenceye alınmıştır:
+
+1. **Çoklu Görev Watchdog Sistemi (Task-Level Watchdog & IWDG):**
+   * Mikrodenetleyicinin kilitlenmesini engellemek için bağımsız watchdog (IWDG) donanımı aktif edilmiştir.
+   * FreeRTOS üzerinde çalışan `StartTelemetryTask`, `StartNavigationTask` ve `StartSafetyTask` döngüleri, kendi çalışma periyotlarında `safety_feed_watchdog()` fonksiyonuyla sistem sağlık bayrağını besler. En yüksek öncelikli güvenlik görevi olan `SafetyTask`, tüm görevlerin son check-in zamanlarını takip eder. Herhangi bir görev kilitlenirse donanımsal IWDG yenilenmez ve STM32 2.0 saniye içinde donanımsal olarak kendini resetler (Premature reset korumalıdır).
+2. **Fiziksel Acil Stop (EXTI Button):**
+   * Bot üzerinde bulunan fiziksel acil stop butonu STM32'nin `PC13` pinine bağlıdır.
+   * Butona basıldığı an donanımsal dış kesme (`EXTI15_10_IRQHandler`) tetiklenir, motor PWM çıkışları (PA6, PA7) anında `1500us` (nötr/stop) seviyesine çekilerek otopilot `MODE_EMERGENCY` modunda kilitlenir.
+3. **Zaman Aşımı Korumaları (Timeout Failsafes):**
+   * **Telemetri Kaybı:** Telefon ile STM32 arasındaki USB bağlantısı koptuğunda veya 500ms'den uzun süre telefon komutu (`MSG_PHONE_COMMANDS`) alınmadığında STM32 motorları kapatır.
+   * **RC Kumanda Bağlantı Kopması:** RC alıcısından gelen sinyal kalitesi (`failsafe` bayrağı) düştüğünde sistem otomatik olarak manuel/otonom moddan çıkıp failsafe durumuna geçer.
+
+---
+
+## 🗺️ Versiyonlama ve Protokol Yol Haritası (Roadmap - Madde 6)
+
+Sistem haberleşme protokolü, STM32 (`protocol.h`) ve SBC (`protocol.py`) arasında senkronize edilmiş sürüm kontrolüne sahiptir:
+
+* **Sürüm Kontrolü (Protocol Versioning):** Tüm paket başlıklarında Sync baytlarından hemen sonra 1 baytlık `PROTOCOL_VERSION = 0x01` doğrulaması yapılır. Yanlış protokolle gelen veriler anında elenerek olası veri bozulmaları engellenir.
+* **Geliştirme Yol Haritası:**
+  * `v1.0.0` (Mevcut): Temel otonomi, APF planlayıcı, Çift costmap, GCS kablosuz dinleyici, telemetrik motor PWM geri bildirimi.
+  * `v1.1.0` (Planlanan): Çoklu İDA sürü koordinasyonu için MAVLink mesaj çevirici köprüsü (`mavlink_bridge.py`).
+  * `v1.2.0` (Planlanan): LIDAR / Radar verilerinin costmap katmanına entegre edilmesi ve derinlik sensörüyle sığlık koruması.
+
+---
+
+## 💾 STM32 Firmware Güncelleme ve Kurtarma (DFU Guide - Madde 8)
+
+STM32F405RGT6 mikrodenetleyicisine yeni firmware yüklemek veya önceki sürüme geri dönmek (rollback) için aşağıdaki yöntemler kullanılabilir:
+
+### Yöntem A: STM32CubeProgrammer ile USB DFU Üzerinden Güncelleme (Önerilen)
+1. Botun elektriğini kapatın.
+2. STM32 kartı üzerindeki `BOOT0` pinini `3.3V` pinine kısa devre yapın (veya BOOT switch'ini ON konumuna alın).
+3. Kartı micro-USB kablosuyla bilgisayara bağlayın. Kart otomatik olarak donanımsal DFU moduna geçecektir.
+4. **STM32CubeProgrammer** yazılımını açın. Sağ üstteki bağlantı türünü **USB** seçip **Connect** butonuna basın.
+5. `STM32/build/aydede.bin` (veya kurtarma dosyası `rollback.bin`) dosyasını seçin.
+6. **Start Programming** butonuna basarak yükleme işlemini tamamlayın.
+7. Yükleme bittiğinde `BOOT0` pinini `GND` konumuna çekip kartı yeniden başlatın.
+
+### Yöntem B: UART/Seri Port (FTDI) Üzerinden Güncelleme
+1. FTDI dönüştürücünün RX pinini STM32 `PA9` (TX1) pinine, TX pinini `PA10` (RX1) pinine bağlayın. GND hatlarını birleştirin.
+2. `BOOT0` pinini `3.3V` yapıp kartı çalıştırın.
+3. STM32CubeProgrammer yazılımında bağlantıyı **UART** seçip ilgili COM portunu ve baudrate'i (örn. 115200) seçerek bağlanın.
+4. Firmware imajını seçerek programlamayı başlatın.
+5. İşlem sonrasında `BOOT0` pinini `GND` yapıp kartı resetleyin.
+

@@ -17,6 +17,7 @@ extern "C" {
 #define MSG_PHONE_COMMANDS  0x02
 #define MSG_STM32_TELEMETRY 0x03
 #define MSG_PID_TUNING      0x04
+#define PROTOCOL_VERSION    0x01
 
 // System Modes
 #define MODE_IDLE       0x00
@@ -33,14 +34,15 @@ typedef struct {
     uint8_t mode;   // Current system mode (0: Idle, 1: Auto)
 } Heartbeat_t;
 
-// Phone Commands Struct (9 bytes)
+// Phone Commands Struct (10 bytes) - Sequence ID added (Görev 3.5)
 typedef struct {
+    uint8_t sequence_id;   // Sequence ID for stale packet detection
     uint8_t control_mode;  // 0 = Differential thrust, 1 = Speed & Heading
     float target_speed;    // m/s or percentage
     float target_heading;  // degrees (0-360)
 } PhoneCommands_t;
 
-// STM32 Telemetry Struct (54 bytes)
+// STM32 Telemetry Struct (58 bytes)
 typedef struct {
     double lat;
     double lon;
@@ -55,6 +57,8 @@ typedef struct {
     float yaw_rate;
     float battery;
     uint8_t mode;
+    uint16_t left_pwm;
+    uint16_t right_pwm;
 } Telemetry_t;
 
 // PID Tuning Struct (12 bytes)
@@ -65,6 +69,14 @@ typedef struct {
 } PIDTuning_t;
 
 #pragma pack(pop)
+
+// Static compile-time size assertions (F-35 coding style - Madde 5)
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(Heartbeat_t) == 2, "Heartbeat_t size must be exactly 2 bytes");
+_Static_assert(sizeof(PhoneCommands_t) == 10, "PhoneCommands_t size must be exactly 10 bytes");
+_Static_assert(sizeof(Telemetry_t) == 58, "Telemetry_t size must be exactly 58 bytes");
+_Static_assert(sizeof(PIDTuning_t) == 12, "PIDTuning_t size must be exactly 12 bytes");
+#endif
 
 // CRC16 Modbus Calculation in C
 static inline uint16_t calculate_crc16(const uint8_t *data, uint16_t len) {
@@ -87,6 +99,7 @@ static inline uint16_t calculate_crc16(const uint8_t *data, uint16_t len) {
 typedef enum {
     STATE_WAIT_SYNC1 = 0,
     STATE_WAIT_SYNC2,
+    STATE_WAIT_VERSION,
     STATE_WAIT_MSG_ID,
     STATE_WAIT_LEN,
     STATE_WAIT_PAYLOAD,
@@ -100,18 +113,29 @@ typedef struct {
     uint8_t payload_len;
     uint8_t payload_idx;
     uint8_t payload[255];
-    uint8_t header_buf[4]; // Stores Sync1, Sync2, MsgID, Len for CRC
+    uint8_t header_buf[5]; // Stores Sync1, Sync2, Version, MsgID, Len for CRC
     uint16_t received_crc;
+    uint32_t last_byte_time; // Time of the last received byte for 50ms timeout (Görev 3.4)
 } ProtocolParser_t;
 
 static inline void protocol_parser_init(ProtocolParser_t *parser) {
     parser->state = STATE_WAIT_SYNC1;
     parser->payload_idx = 0;
+    parser->last_byte_time = 0;
 }
 
 // Feeds a single byte into the parser state machine
 // Returns 1 if a valid packet has been parsed, 0 otherwise
-static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b) {
+static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b, uint32_t current_time_ms) {
+    // 50ms Paket Zaman Aşımı Kontrolü (Görev 3.4)
+    if (parser->state != STATE_WAIT_SYNC1) {
+        if (current_time_ms - parser->last_byte_time > 50) {
+            parser->state = STATE_WAIT_SYNC1;
+            parser->payload_idx = 0;
+        }
+    }
+    parser->last_byte_time = current_time_ms;
+
     switch (parser->state) {
         case STATE_WAIT_SYNC1:
             if (b == SYNC_BYTE_1) {
@@ -123,6 +147,15 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b) 
         case STATE_WAIT_SYNC2:
             if (b == SYNC_BYTE_2) {
                 parser->header_buf[1] = b;
+                parser->state = STATE_WAIT_VERSION;
+            } else {
+                parser->state = STATE_WAIT_SYNC1;
+            }
+            break;
+            
+        case STATE_WAIT_VERSION:
+            if (b == PROTOCOL_VERSION) {
+                parser->header_buf[2] = b;
                 parser->state = STATE_WAIT_MSG_ID;
             } else {
                 parser->state = STATE_WAIT_SYNC1;
@@ -131,15 +164,18 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b) 
             
         case STATE_WAIT_MSG_ID:
             parser->msg_id = b;
-            parser->header_buf[2] = b;
+            parser->header_buf[3] = b;
             parser->state = STATE_WAIT_LEN;
             break;
             
         case STATE_WAIT_LEN:
             parser->payload_len = b;
-            parser->header_buf[3] = b;
+            parser->header_buf[4] = b;
             parser->payload_idx = 0;
-            if (parser->payload_len > 0) {
+            // Emniyet Kontrolü: Maksimum paket boyu doğrulaması (Görev 15)
+            if (parser->payload_len > 128) {
+                parser->state = STATE_WAIT_SYNC1;
+            } else if (parser->payload_len > 0) {
                 parser->state = STATE_WAIT_PAYLOAD;
             } else {
                 parser->state = STATE_WAIT_CRC_LSB;
@@ -147,7 +183,12 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b) 
             break;
             
         case STATE_WAIT_PAYLOAD:
-            parser->payload[parser->payload_idx++] = b;
+            if (parser->payload_idx < sizeof(parser->payload)) {
+                parser->payload[parser->payload_idx++] = b;
+            } else {
+                parser->state = STATE_WAIT_SYNC1;
+                break;
+            }
             if (parser->payload_idx >= parser->payload_len) {
                 parser->state = STATE_WAIT_CRC_LSB;
             }
@@ -161,20 +202,32 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b) 
         case STATE_WAIT_CRC_MSB:
             parser->received_crc |= ((uint16_t)b << 8);
             
-            // Calculate expected CRC: header (4 bytes) + payload
-            uint8_t crc_temp[300];
-            memcpy(crc_temp, parser->header_buf, 4);
-            if (parser->payload_len > 0) {
-                memcpy(crc_temp + 4, parser->payload, parser->payload_len);
-            }
-            
-            uint16_t expected_crc = calculate_crc16(crc_temp, 4 + parser->payload_len);
-            
-            // Reset parser state for next packet
-            parser->state = STATE_WAIT_SYNC1;
-            
-            if (parser->received_crc == expected_crc) {
-                return 1; // Valid packet parsed
+            // CRC'yi geçici tampon OLMADAN parçalı hesapla (A7: stack taşma önlemi)
+            {
+                uint16_t crc = 0xFFFF;
+                // Önce header (5 bayt) üzerinden CRC hesapla
+                for (uint8_t ci = 0; ci < 5; ci++) {
+                    crc ^= (uint16_t)parser->header_buf[ci];
+                    for (uint8_t bi = 0; bi < 8; bi++) {
+                        if (crc & 0x0001) crc = (crc >> 1) ^ 0xA001;
+                        else crc >>= 1;
+                    }
+                }
+                // Ardından payload üzerinden CRC devam et
+                for (uint8_t ci = 0; ci < parser->payload_len; ci++) {
+                    crc ^= (uint16_t)parser->payload[ci];
+                    for (uint8_t bi = 0; bi < 8; bi++) {
+                        if (crc & 0x0001) crc = (crc >> 1) ^ 0xA001;
+                        else crc >>= 1;
+                    }
+                }
+                
+                // Reset parser state for next packet
+                parser->state = STATE_WAIT_SYNC1;
+                
+                if (parser->received_crc == crc) {
+                    return 1; // Valid packet parsed
+                }
             }
             break;
     }

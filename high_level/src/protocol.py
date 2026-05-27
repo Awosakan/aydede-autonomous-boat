@@ -9,6 +9,7 @@ logger.setLevel(logging.INFO)
 # Protocol Constants
 SYNC_BYTE_1 = 0xAA
 SYNC_BYTE_2 = 0x55
+PROTOCOL_VERSION = 0x01
 
 # Message IDs
 MSG_HEARTBEAT = 0x01
@@ -43,8 +44,8 @@ class IDAPacket:
         self.length = len(payload)
         
     def pack(self) -> bytes:
-        # Format: Sync1, Sync2, MsgID, Length, Payload, CRC16_LSB, CRC16_MSB
-        header = struct.pack("<BBBB", SYNC_BYTE_1, SYNC_BYTE_2, self.msg_id, self.length)
+        # Format: Sync1, Sync2, Version, MsgID, Length, Payload, CRC16_LSB, CRC16_MSB
+        header = struct.pack("<BBBBB", SYNC_BYTE_1, SYNC_BYTE_2, PROTOCOL_VERSION, self.msg_id, self.length)
         packet_without_crc = header + self.payload
         crc = calculate_crc16(packet_without_crc)
         crc_bytes = struct.pack("<H", crc)
@@ -57,10 +58,11 @@ class IDAParser:
     """
     STATE_WAIT_SYNC1 = 0
     STATE_WAIT_SYNC2 = 1
-    STATE_WAIT_MSG_ID = 2
-    STATE_WAIT_LEN = 3
-    STATE_WAIT_PAYLOAD = 4
-    STATE_WAIT_CRC = 5
+    STATE_WAIT_VERSION = 2
+    STATE_WAIT_MSG_ID = 3
+    STATE_WAIT_LEN = 4
+    STATE_WAIT_PAYLOAD = 5
+    STATE_WAIT_CRC = 6
 
     def __init__(self, callback):
         self.state = self.STATE_WAIT_SYNC1
@@ -87,6 +89,12 @@ class IDAParser:
                 
         elif self.state == self.STATE_WAIT_SYNC2:
             if b == SYNC_BYTE_2:
+                self.state = self.STATE_WAIT_VERSION
+            else:
+                self.state = self.STATE_WAIT_SYNC1 # Reset
+                
+        elif self.state == self.STATE_WAIT_VERSION:
+            if b == PROTOCOL_VERSION:
                 self.state = self.STATE_WAIT_MSG_ID
             else:
                 self.state = self.STATE_WAIT_SYNC1 # Reset
@@ -116,7 +124,7 @@ class IDAParser:
             self.crc_buffer.append(b)
             if len(self.crc_buffer) >= 2:
                 # Paketin tamamını oluştur ve CRC hesabı yap
-                header = struct.pack("<BBBB", SYNC_BYTE_1, SYNC_BYTE_2, self.msg_id, self.payload_len)
+                header = struct.pack("<BBBBB", SYNC_BYTE_1, SYNC_BYTE_2, PROTOCOL_VERSION, self.msg_id, self.payload_len)
                 full_packet = header + bytes(self.payload)
                 expected_crc = calculate_crc16(full_packet)
                 

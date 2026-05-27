@@ -17,6 +17,7 @@ extern "C" {
 #define MSG_PHONE_COMMANDS  0x02
 #define MSG_STM32_TELEMETRY 0x03
 #define MSG_PID_TUNING      0x04
+#define PROTOCOL_VERSION    0x01
 
 // System Modes
 #define MODE_IDLE       0x00
@@ -69,6 +70,14 @@ typedef struct {
 
 #pragma pack(pop)
 
+// Static compile-time size assertions (F-35 coding style - Madde 5)
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(Heartbeat_t) == 2, "Heartbeat_t size must be exactly 2 bytes");
+_Static_assert(sizeof(PhoneCommands_t) == 10, "PhoneCommands_t size must be exactly 10 bytes");
+_Static_assert(sizeof(Telemetry_t) == 58, "Telemetry_t size must be exactly 58 bytes");
+_Static_assert(sizeof(PIDTuning_t) == 12, "PIDTuning_t size must be exactly 12 bytes");
+#endif
+
 // CRC16 Modbus Calculation in C
 static inline uint16_t calculate_crc16(const uint8_t *data, uint16_t len) {
     uint16_t crc = 0xFFFF;
@@ -90,6 +99,7 @@ static inline uint16_t calculate_crc16(const uint8_t *data, uint16_t len) {
 typedef enum {
     STATE_WAIT_SYNC1 = 0,
     STATE_WAIT_SYNC2,
+    STATE_WAIT_VERSION,
     STATE_WAIT_MSG_ID,
     STATE_WAIT_LEN,
     STATE_WAIT_PAYLOAD,
@@ -103,7 +113,7 @@ typedef struct {
     uint8_t payload_len;
     uint8_t payload_idx;
     uint8_t payload[255];
-    uint8_t header_buf[4]; // Stores Sync1, Sync2, MsgID, Len for CRC
+    uint8_t header_buf[5]; // Stores Sync1, Sync2, Version, MsgID, Len for CRC
     uint16_t received_crc;
     uint32_t last_byte_time; // Time of the last received byte for 50ms timeout (Görev 3.4)
 } ProtocolParser_t;
@@ -137,6 +147,15 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b, 
         case STATE_WAIT_SYNC2:
             if (b == SYNC_BYTE_2) {
                 parser->header_buf[1] = b;
+                parser->state = STATE_WAIT_VERSION;
+            } else {
+                parser->state = STATE_WAIT_SYNC1;
+            }
+            break;
+            
+        case STATE_WAIT_VERSION:
+            if (b == PROTOCOL_VERSION) {
+                parser->header_buf[2] = b;
                 parser->state = STATE_WAIT_MSG_ID;
             } else {
                 parser->state = STATE_WAIT_SYNC1;
@@ -145,13 +164,13 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b, 
             
         case STATE_WAIT_MSG_ID:
             parser->msg_id = b;
-            parser->header_buf[2] = b;
+            parser->header_buf[3] = b;
             parser->state = STATE_WAIT_LEN;
             break;
             
         case STATE_WAIT_LEN:
             parser->payload_len = b;
-            parser->header_buf[3] = b;
+            parser->header_buf[4] = b;
             parser->payload_idx = 0;
             // Emniyet Kontrolü: Maksimum paket boyu doğrulaması (Görev 15)
             if (parser->payload_len > 128) {
@@ -164,7 +183,12 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b, 
             break;
             
         case STATE_WAIT_PAYLOAD:
-            parser->payload[parser->payload_idx++] = b;
+            if (parser->payload_idx < sizeof(parser->payload)) {
+                parser->payload[parser->payload_idx++] = b;
+            } else {
+                parser->state = STATE_WAIT_SYNC1;
+                break;
+            }
             if (parser->payload_idx >= parser->payload_len) {
                 parser->state = STATE_WAIT_CRC_LSB;
             }
@@ -181,8 +205,8 @@ static inline uint8_t protocol_parser_feed(ProtocolParser_t *parser, uint8_t b, 
             // CRC'yi geçici tampon OLMADAN parçalı hesapla (A7: stack taşma önlemi)
             {
                 uint16_t crc = 0xFFFF;
-                // Önce header (4 bayt) üzerinden CRC hesapla
-                for (uint8_t ci = 0; ci < 4; ci++) {
+                // Önce header (5 bayt) üzerinden CRC hesapla
+                for (uint8_t ci = 0; ci < 5; ci++) {
                     crc ^= (uint16_t)parser->header_buf[ci];
                     for (uint8_t bi = 0; bi < 8; bi++) {
                         if (crc & 0x0001) crc = (crc >> 1) ^ 0xA001;

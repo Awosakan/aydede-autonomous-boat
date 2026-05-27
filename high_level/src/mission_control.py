@@ -443,6 +443,22 @@ class MissionController:
             target_speed = self.config.get("loiter_speed_ms", 0.3)
             target_heading = curr_yaw
 
+        # 2.5 Kademeli Sanal Çit Koruması (Soft Geofence - Madde 4)
+        if self.state not in [STATE_IDLE, STATE_FAILSAFE] and self.home_waypoint:
+            dx_h, dy_h = gps_to_meters(self.home_waypoint[0], self.home_waypoint[1], curr_lat, curr_lon)
+            dist_from_home = math.sqrt(dx_h**2 + dy_h**2)
+            predicted_dist = dist_from_home + max(0.0, curr_speed) * 2.0
+            if predicted_dist > 85.0:
+                # Kademeli/geçici sınır: Hızı emniyet için min_speed_ms ile sınırla
+                min_speed = self.config.get("min_speed_ms", 0.5)
+                target_speed = min(target_speed, min_speed)
+                if not hasattr(self, '_last_geofence_warn_time') or (now - self._last_geofence_warn_time > 5.0):
+                    self._last_geofence_warn_time = now
+                    logger.warning(
+                        f"[GCS_WARNING] Yumuşak Sanal Çit Uyarısı! Mevcut: {dist_from_home:.1f}m, 2sn Sonraki: {predicted_dist:.1f}m. "
+                        f"Çiti aşmamak için hız {min_speed} m/s seviyesine düşürüldü."
+                    )
+
         # 3. Ramp Filtresi (Motor Komutlarında Yumuşatma - Görev 11 & 46)
         if self.state == STATE_IDLE:
             self.last_sent_speed = 0.0
