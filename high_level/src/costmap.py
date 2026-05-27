@@ -61,6 +61,19 @@ class LocalCostmap:
         İDA'nın hızına duyarlı dinamik şişirme yarıçapı kullanır.
         """
         # 1. Ego-motion Compensation (Ego-hareket telafisi) - Görev 2.6
+        # Girdi güvenliği: NaN/Inf değerlerini ayıkla ve koruma sağla
+        try:
+            if math.isnan(dx_body) or math.isinf(dx_body): dx_body = 0.0
+            if math.isnan(dy_body) or math.isinf(dy_body): dy_body = 0.0
+            if math.isnan(dyaw_deg) or math.isinf(dyaw_deg): dyaw_deg = 0.0
+        except (TypeError, NameError):
+            dx_body, dy_body, dyaw_deg = 0.0, 0.0, 0.0
+
+        # Değerleri makul sınırlarla kırp (OpenCV matris taşıp çökmesin diye)
+        dx_body = max(-self.size_m, min(self.size_m, dx_body))
+        dy_body = max(-self.size_m, min(self.size_m, dy_body))
+        dyaw_deg = max(-180.0, min(180.0, dyaw_deg))
+
         if abs(dx_body) > 0.001 or abs(dy_body) > 0.001 or abs(dyaw_deg) > 0.001:
             # Hücre cinsinden ötelemeler
             row_shift = dx_body / self.resolution
@@ -71,9 +84,14 @@ class LocalCostmap:
             M[0, 2] += col_shift
             M[1, 2] += row_shift
             
-            # Katmanları warp et
-            self.grid_gates = cv2.warpAffine(self.grid_gates, M, (self.grid_size, self.grid_size), flags=cv2.INTER_NEAREST)
-            self.grid_obstacles = cv2.warpAffine(self.grid_obstacles, M, (self.grid_size, self.grid_size), flags=cv2.INTER_NEAREST)
+            # Katmanları warp et (Çökme korumalı try-except bloğunda)
+            try:
+                self.grid_gates = cv2.warpAffine(self.grid_gates, M, (self.grid_size, self.grid_size), flags=cv2.INTER_NEAREST)
+                self.grid_obstacles = cv2.warpAffine(self.grid_obstacles, M, (self.grid_size, self.grid_size), flags=cv2.INTER_NEAREST)
+            except Exception as e:
+                logger.error(f"Ego-motion warpAffine hatasi: {e}. Izgaralar sifirlaniyor.")
+                self.grid_gates.fill(0)
+                self.grid_obstacles.fill(0)
 
         # 2. Eski harita katmanlarını sönümle (Decay - Görev 150)
         decay = 0.70 if camera_lost else self.decay_factor

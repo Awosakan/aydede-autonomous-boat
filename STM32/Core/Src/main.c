@@ -354,18 +354,29 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 // UART Hata Yönetim Callback (ORE - Overrun, FE - Frame Error, NE - Noise Error Temizleme)
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
     if (huart->Instance == USART1) {
-        // Hata bayraklarını temizle ve DMA alıcısını yeniden başlat
+        // DMA durdur, bayrakları temizle, SR/DR oku ve alımı yeniden başlat
+        HAL_UART_DMAStop(huart);
         __HAL_UART_CLEAR_OREFLAG(huart);
         __HAL_UART_CLEAR_NEFLAG(huart);
         __HAL_UART_CLEAR_FEFLAG(huart);
-        HAL_UART_Receive_DMA(&huart1, usart1_rx_buf, USART1_RX_BUF_SIZE);
+        
+        volatile uint32_t tmpreg = huart->Instance->SR;
+        tmpreg = huart->Instance->DR;
+        (void)tmpreg;
+        
+        HAL_UART_Receive_DMA(huart, usart1_rx_buf, USART1_RX_BUF_SIZE);
     }
     else if (huart->Instance == USART2) {
-        // Hata bayraklarını temizle ve kesme alıcısını yeniden başlat
+        // Bayrakları temizle, SR/DR oku ve kesmeli alımı yeniden başlat
         __HAL_UART_CLEAR_OREFLAG(huart);
         __HAL_UART_CLEAR_NEFLAG(huart);
         __HAL_UART_CLEAR_FEFLAG(huart);
-        HAL_UART_Receive_IT(&huart2, &gps_rx_byte, 1);
+        
+        volatile uint32_t tmpreg = huart->Instance->SR;
+        tmpreg = huart->Instance->DR;
+        (void)tmpreg;
+        
+        HAL_UART_Receive_IT(huart, &gps_rx_byte, 1);
     }
 }
 

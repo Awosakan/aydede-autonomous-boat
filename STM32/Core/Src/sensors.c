@@ -205,8 +205,9 @@ void sensors_imu_update(I2C_HandleTypeDef *hi2c, float dt) {
     // Ancak yan yan sürüklenmelerde (crab walk) ve sert dönüşlerde COG ile Heading farklılaşacağından,
     // yanal ivme (ay) ve dönüş hızı (yaw_rate) için eşik filtresi uyguluyoruz (Görev 4.3).
     // Ucuz GPS gürültüsünü engellemek için hız eşiği 1.2 m/s'ye yükseltildi.
-    if (gps_data.gps_lock && gps_data.sog > 1.2f && fabsf(ay) < 0.12f && fabsf(imu_data.yaw_rate) < 15.0f) {
-        float cog = gps_data.cog;
+    GPS_Data_t gps_copy = sensors_get_gps();
+    if (gps_copy.gps_lock && gps_copy.sog > 1.2f && fabsf(ay) < 0.12f && fabsf(imu_data.yaw_rate) < 15.0f) {
+        float cog = gps_copy.cog;
         float diff = cog - imu_data.yaw;
         while (diff > 180.0f)  diff -= 360.0f;
         while (diff < -180.0f) diff += 360.0f;
@@ -320,7 +321,9 @@ static void parse_nmea_sentence(const char *sentence) {
             
             // GPS Veri Aralığı Kontrolü (Görev 8: Bounds Check)
             if (parsed_lat < -90.0 || parsed_lat > 90.0 || parsed_lon < -180.0 || parsed_lon > 180.0 || parsed_speed < 0.0f || parsed_speed > 30.0f) {
+                taskENTER_CRITICAL();
                 gps_data.gps_lock = 0;
+                taskEXIT_CRITICAL();
                 return;
             }
             
@@ -337,12 +340,17 @@ static void parse_nmea_sentence(const char *sentence) {
             static double init_lon_sum = 0.0;
             static uint8_t init_fix_count = 0;
 
-            if (!gps_data.has_first_fix) {
+            taskENTER_CRITICAL();
+            uint8_t has_fix = gps_data.has_first_fix;
+            taskEXIT_CRITICAL();
+
+            if (!has_fix) {
                 if (init_fix_count < 5) {
                     init_lat_sum += parsed_lat;
                     init_lon_sum += parsed_lon;
                     init_fix_count++;
                     
+                    taskENTER_CRITICAL();
                     // Ortalama oluşana kadar geçici olarak her gelen veriyi doğrudan yazıyoruz
                     gps_data.latitude = parsed_lat;
                     gps_data.longitude = parsed_lon;
@@ -356,14 +364,21 @@ static void parse_nmea_sentence(const char *sentence) {
                         gps_data.longitude = init_lon_sum / 5.0;
                         gps_data.has_first_fix = 1;
                     }
+                    taskEXIT_CRITICAL();
                 }
             } else {
-                float dt = (float)(now_ms - gps_data.last_update_time) / 1000.0f;
+                taskENTER_CRITICAL();
+                double prev_lat = gps_data.latitude;
+                double prev_lon = gps_data.longitude;
+                uint32_t prev_update = gps_data.last_update_time;
+                taskEXIT_CRITICAL();
+
+                float dt = (float)(now_ms - prev_update) / 1000.0f;
                 if (dt <= 0.0f) dt = 0.1f; // Bölme hatasını önle
                 
                 // İki konum arasındaki mesafeyi metre cinsinden hesapla (Flat Earth)
-                double dx = (parsed_lon - gps_data.longitude) * 111320.0 * cos(gps_data.latitude * M_PI / 180.0);
-                double dy = (parsed_lat - gps_data.latitude) * 110574.0;
+                double dx = (parsed_lon - prev_lon) * 111320.0 * cos(prev_lat * M_PI / 180.0);
+                double dy = (parsed_lat - prev_lat) * 110574.0;
                 float distance = (float)sqrt(dx*dx + dy*dy);
                 float calculated_speed = distance / dt;
                 
@@ -371,19 +386,23 @@ static void parse_nmea_sentence(const char *sentence) {
                 // filtreyi geçici olarak gevşetip yeni konumu doğrudan kabul ediyoruz. 
                 // Aksi takdirde 6 m/s sıçrama kontrolü devrededir.
                 if (calculated_speed < GPS_OUTLIER_SPEED_LIMIT || dt > 5.0f) {
+                    taskENTER_CRITICAL();
                     gps_data.latitude = parsed_lat;
                     gps_data.longitude = parsed_lon;
                     gps_data.sog = parsed_speed;
                     gps_data.cog = parsed_cog;
                     gps_data.gps_lock = 1;
                     gps_data.last_update_time = now_ms;
+                    taskEXIT_CRITICAL();
                 } else {
                     // Outlier tespit edildi: Konumu güncelleme, eski konumu koru. Hız değerini eski değere sabitle.
                     // GPS kilit durumunu bozmuyoruz ancak bu sıçrayan paketi yoksayıyoruz.
                 }
             }
         } else {
+            taskENTER_CRITICAL();
             gps_data.gps_lock = 0; // GPS sinyali koptu
+            taskEXIT_CRITICAL();
         }
     }
 }
@@ -424,9 +443,11 @@ void sensors_gps_update_tick(uint32_t current_time_ms) {
     }
 
     // Eğer son GPS verisinden bu yana 2.0 saniyeden fazla geçmişse kilit durumunu otomatik kayıp olarak ata
+    taskENTER_CRITICAL();
     if (gps_data.gps_lock && (current_time_ms - gps_data.last_update_time > 2000)) {
         gps_data.gps_lock = 0;
     }
+    taskEXIT_CRITICAL();
 }
 
 float sensors_battery_read(ADC_HandleTypeDef *hadc) {
@@ -457,9 +478,15 @@ GPS_Data_t sensors_get_gps(void) {
 }
 
 IMU_Data_t sensors_get_imu(void) {
-    return imu_data;
+    taskENTER_CRITICAL();
+    IMU_Data_t copy = imu_data;
+    taskEXIT_CRITICAL();
+    return copy;
 }
 
 float sensors_get_yaw(void) {
-    return imu_data.yaw;
+    taskENTER_CRITICAL();
+    float yaw = imu_data.yaw;
+    taskEXIT_CRITICAL();
+    return yaw;
 }

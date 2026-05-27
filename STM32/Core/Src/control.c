@@ -1,4 +1,6 @@
 #include "control.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <math.h>
 
 static PID_t yaw_pid;
@@ -23,16 +25,20 @@ void control_init(void) {
 }
 
 void control_set_pid_gains(float kp, float ki, float kd) {
+    taskENTER_CRITICAL();
     yaw_pid.kp = kp;
     yaw_pid.ki = ki;
     yaw_pid.kd = kd;
     yaw_pid.integrator = 0.0f;
     yaw_pid.last_yaw = -999.0f;
+    taskEXIT_CRITICAL();
 }
 
 void control_set_motor_scaling(float left_scale, float right_scale) {
+    taskENTER_CRITICAL();
     left_motor_scaling = left_scale;
     right_motor_scaling = right_scale;
+    taskEXIT_CRITICAL();
 }
 
 static float linearize_thrust(float thrust) {
